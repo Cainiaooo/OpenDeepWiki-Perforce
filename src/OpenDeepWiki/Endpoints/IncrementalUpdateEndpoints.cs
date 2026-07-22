@@ -4,6 +4,7 @@ using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Services.Auth;
 using OpenDeepWiki.Services.Repositories;
+using OpenDeepWiki.Services.Repositories.Perforce;
 
 namespace OpenDeepWiki.Endpoints;
 
@@ -37,6 +38,11 @@ public static class IncrementalUpdateEndpoints
             .WithSummary("外部注入变更触发增量更新")
             .WithDescription("由外部(如 Perforce CI)提交变更文件列表与目标版本(changelist 号)，创建高优先级增量更新任务");
 
+        repoGroup.MapPost("/{repositoryId}/branches/{branchId}/incremental-update/perforce-event", TriggerPerforceEventAsync)
+            .WithName("TriggerPerforceIncrementalEvent")
+            .WithSummary("触发 Perforce changelist 区间增量更新")
+            .WithDescription("只提交可选的最新 changelist；服务端查询区间、过滤 CL/文件，并复用外部增量任务管线");
+
         // 增量更新任务管理端点
         var taskGroup = app.MapGroup("/api/v1/incremental-updates")
             .WithTags("增量更新任务");
@@ -52,6 +58,154 @@ public static class IncrementalUpdateEndpoints
             .WithDescription("重试一个失败的增量更新任务");
 
         return app;
+    }
+
+    /// <summary>
+    /// Perforce 二期轻量事件入口。
+    /// POST /api/v1/repositories/{repositoryId}/branches/{branchId}/incremental-update/perforce-event
+    /// </summary>
+    private static async Task<IResult> TriggerPerforceEventAsync(
+        string repositoryId,
+        string branchId,
+        [FromBody] PerforceIncrementalEventRequest? request,
+        [FromServices] IPerforceIncrementalEventService eventService,
+        [FromServices] IContext context,
+        [FromServices] IUserContext userContext,
+        [FromServices] ILogger<IncrementalUpdateEndpointsLogger> logger,
+        CancellationToken cancellationToken)
+    {
+        var (authorizationResult, _) = await AuthorizeRepositoryMutationAsync(
+            context, userContext, repositoryId, cancellationToken);
+        if (authorizationResult is not null)
+        {
+            return authorizationResult;
+        }
+
+        var branchExists = await context.RepositoryBranches
+            .AsNoTracking()
+            .AnyAsync(
+                branch => branch.Id == branchId && branch.RepositoryId == repositoryId && !branch.IsDeleted,
+                cancellationToken);
+        if (!branchExists)
+        {
+            return Results.NotFound(new IncrementalUpdateErrorResponse
+            {
+                Success = false,
+                Error = "分支不存在",
+                ErrorCode = "BRANCH_NOT_FOUND"
+            });
+        }
+
+        try
+        {
+            var result = await eventService.TriggerAsync(
+                repositoryId,
+                branchId,
+                request?.LatestChangelist,
+                cancellationToken);
+
+            logger.LogInformation(
+                "Perforce incremental event completed. RepositoryId: {RepositoryId}, BranchId: {BranchId}, Action: {Action}, TargetCL: {TargetCL}, TaskId: {TaskId}",
+                repositoryId, branchId, result.Action, result.TargetChangelist, result.TaskId ?? "none");
+
+            return Results.Ok(new PerforceIncrementalEventResponse
+            {
+                Success = true,
+                Action = result.Action.ToString(),
+                TargetChangelist = result.TargetChangelist.ToString(),
+                TaskId = result.TaskId,
+                TotalChangelists = result.TotalChangelists,
+                IncludedChangelists = result.IncludedChangelists,
+                InspectedFiles = result.InspectedFiles,
+                IncludedFiles = result.IncludedFiles,
+                Message = result.Message
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            logger.LogWarning(ex, "Invalid Perforce event request. RepositoryId: {RepositoryId}, BranchId: {BranchId}", repositoryId, branchId);
+            return Results.BadRequest(new IncrementalUpdateErrorResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                ErrorCode = "INVALID_REQUEST"
+            });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            logger.LogWarning(ex, "Perforce event resource not found. RepositoryId: {RepositoryId}, BranchId: {BranchId}", repositoryId, branchId);
+            var errorCode = ex.Message.Contains("分支", StringComparison.Ordinal)
+                ? "BRANCH_NOT_FOUND"
+                : "REPOSITORY_NOT_FOUND";
+            return Results.NotFound(new IncrementalUpdateErrorResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                ErrorCode = errorCode
+            });
+        }
+        catch (DirectoryNotFoundException ex)
+        {
+            logger.LogWarning(ex, "Perforce workspace missing. RepositoryId: {RepositoryId}, BranchId: {BranchId}", repositoryId, branchId);
+            return Results.BadRequest(new IncrementalUpdateErrorResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                ErrorCode = "WORKSPACE_NOT_FOUND"
+            });
+        }
+        catch (PerforceCommandException ex)
+        {
+            logger.LogError(ex, "Perforce command failed. RepositoryId: {RepositoryId}, BranchId: {BranchId}", repositoryId, branchId);
+            return Results.Json(
+                new IncrementalUpdateErrorResponse
+                {
+                    Success = false,
+                    Error = "Perforce 查询失败",
+                    ErrorCode = "PERFORCE_COMMAND_FAILED",
+                    Details = ex.Message
+                },
+                statusCode: StatusCodes.Status502BadGateway);
+        }
+        catch (InvalidOperationException ex)
+        {
+            logger.LogWarning(ex, "Perforce event could not be queued. RepositoryId: {RepositoryId}, BranchId: {BranchId}", repositoryId, branchId);
+            // Only true queue / generation conflicts map to 409. Full-gen enqueue failures are 500.
+            if (ex.Message.Contains("无法创建全量任务", StringComparison.Ordinal))
+            {
+                return Results.Json(
+                    new IncrementalUpdateErrorResponse
+                    {
+                        Success = false,
+                        Error = ex.Message,
+                        ErrorCode = "FULL_GENERATION_ENQUEUE_FAILED"
+                    },
+                    statusCode: StatusCodes.Status500InternalServerError);
+            }
+
+            var errorCode = ex.Message.Contains("full generation", StringComparison.OrdinalIgnoreCase)
+                ? "GENERATION_IN_PROGRESS"
+                : "UPDATE_CONFLICT";
+            return Results.Conflict(new IncrementalUpdateErrorResponse
+            {
+                Success = false,
+                Error = ex.Message,
+                ErrorCode = errorCode
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to process Perforce event. RepositoryId: {RepositoryId}, BranchId: {BranchId}", repositoryId, branchId);
+            return Results.Json(
+                new IncrementalUpdateErrorResponse
+                {
+                    Success = false,
+                    Error = "处理 Perforce 增量事件失败",
+                    ErrorCode = "PERFORCE_EVENT_FAILED",
+                    Details = ex.Message
+                },
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
     }
 
     /// <summary>
@@ -515,6 +669,14 @@ public class ExternalIncrementalUpdateRequest
     public List<string>? DeletedFiles { get; set; }
 }
 
+/// <summary>
+/// Perforce 二期轻量事件。省略 latestChangelist 时由服务端查询工作区 #have。
+/// </summary>
+public sealed class PerforceIncrementalEventRequest
+{
+    public string? LatestChangelist { get; set; }
+}
+
 #endregion
 
 #region 响应模型
@@ -542,6 +704,19 @@ public class TriggerIncrementalUpdateResponse
     /// <summary>
     /// 消息
     /// </summary>
+    public string Message { get; set; } = string.Empty;
+}
+
+public sealed class PerforceIncrementalEventResponse
+{
+    public bool Success { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public string TargetChangelist { get; set; } = string.Empty;
+    public string? TaskId { get; set; }
+    public int TotalChangelists { get; set; }
+    public int IncludedChangelists { get; set; }
+    public int InspectedFiles { get; set; }
+    public int IncludedFiles { get; set; }
     public string Message { get; set; } = string.Empty;
 }
 

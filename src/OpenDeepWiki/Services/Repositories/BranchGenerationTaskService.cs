@@ -11,6 +11,7 @@ public interface IBranchGenerationTaskService
         string branchId,
         string? requestedBy = null,
         int priority = 100,
+        string? targetCommitId = null,
         CancellationToken cancellationToken = default);
 
     Task<BranchGenerationTaskResult> RetryAsync(
@@ -39,6 +40,7 @@ public sealed class BranchGenerationTaskService(
         string branchId,
         string? requestedBy = null,
         int priority = 100,
+        string? targetCommitId = null,
         CancellationToken cancellationToken = default)
     {
         var repository = await context.Repositories
@@ -78,6 +80,8 @@ public sealed class BranchGenerationTaskService(
             Priority = priority,
             IsManualTrigger = true,
             RequestedBy = requestedBy,
+            // Set before the first persist so workers never claim a Perforce promotion task with a null target.
+            TargetCommitId = string.IsNullOrWhiteSpace(targetCommitId) ? null : targetCommitId.Trim(),
             CreatedAt = DateTime.UtcNow
         };
 

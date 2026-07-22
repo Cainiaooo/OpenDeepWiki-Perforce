@@ -83,10 +83,13 @@ public sealed class RepositoryBranchProcessor(
 
             if (languages.Count == 0)
             {
+                // Fail closed: completing without processing would still advance LastCommitId in
+                // BranchGenerationWorker and permanently skip the requested interval.
                 logger.LogWarning(
                     "No languages found for branch. BranchId: {BranchId}, Branch: {BranchName}",
                     branch.Id, branch.BranchName);
-                return workspace.CommitId;
+                throw new InvalidOperationException(
+                    $"分支未配置语言，无法生成文档 (BranchId: {branch.Id}, Branch: {branch.BranchName})");
             }
 
             var isIncremental = !forceFullGeneration &&
@@ -118,10 +121,22 @@ public sealed class RepositoryBranchProcessor(
                     cancellationToken);
             }
 
-            branch.LastCommitId = workspace.CommitId;
-            branch.LastProcessedAt = DateTime.UtcNow;
-            context.RepositoryBranches.Update(branch);
-            await context.SaveChangesAsync(cancellationToken);
+            // Full generation is claimed by BranchGenerationWorker, which resolves the final baseline
+            // (e.g. preserving a numeric Perforce event target over the p4-initial workspace sentinel).
+            // Skip the intermediate write so concurrent readers never observe p4-initial as the baseline.
+            if (!forceFullGeneration)
+            {
+                branch.LastCommitId = workspace.CommitId;
+                branch.LastProcessedAt = DateTime.UtcNow;
+                context.RepositoryBranches.Update(branch);
+                await context.SaveChangesAsync(cancellationToken);
+            }
+            else
+            {
+                branch.LastProcessedAt = DateTime.UtcNow;
+                context.RepositoryBranches.Update(branch);
+                await context.SaveChangesAsync(cancellationToken);
+            }
 
             branchStopwatch.Stop();
             logger.LogInformation(

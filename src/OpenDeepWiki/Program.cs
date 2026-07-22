@@ -22,6 +22,7 @@ using OpenDeepWiki.Services.Organizations;
 using OpenDeepWiki.Services.Prompts;
 using OpenDeepWiki.Services.Recommendation;
 using OpenDeepWiki.Services.Repositories;
+using OpenDeepWiki.Services.Repositories.Perforce;
 using OpenDeepWiki.Services.Translation;
 using OpenDeepWiki.Services.Mcp;
 using OpenDeepWiki.Services.UserProfile;
@@ -175,6 +176,19 @@ try
     builder.Services.AddScoped<IRepositoryBranchProcessor, RepositoryBranchProcessor>();
     builder.Services.AddScoped<IBranchGenerationTaskService, BranchGenerationTaskService>();
     builder.Services.AddScoped<IRepositoryScanPlanResolver, RepositoryScanPlanResolver>();
+
+    // Perforce phase-two event ingestion: tagged CLI access, composable CL/file filters and orchestration.
+    builder.Services.AddOptions<PerforceOptions>()
+        .Bind(builder.Configuration.GetSection(PerforceOptions.SectionName));
+    builder.Services.AddSingleton<IPerforceCommandRunner, PerforceCommandRunner>();
+    builder.Services.AddSingleton<IPerforceClient, PerforceCliClient>();
+    builder.Services.AddSingleton<IChangelistFilter, ChangelistUserFilter>();
+    builder.Services.AddSingleton<IChangelistFilter, ChangelistDescriptionFilter>();
+    builder.Services.AddSingleton<IFileChangeFilter, FileActionFilter>();
+    builder.Services.AddSingleton<IFileChangeFilter, FilePathFilter>();
+    builder.Services.AddSingleton<IFileChangeFilter, FileContentTypeFilter>();
+    builder.Services.AddSingleton<IChangelistFilterPipeline, ChangelistFilterPipeline>();
+    builder.Services.AddScoped<IPerforceIncrementalEventService, PerforceIncrementalEventService>();
 
     // Configure Graphify artifact generation
     builder.Services.AddOptions<GraphifyOptions>()
