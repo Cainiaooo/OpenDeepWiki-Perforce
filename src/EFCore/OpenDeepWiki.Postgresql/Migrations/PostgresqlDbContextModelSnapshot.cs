@@ -815,6 +815,13 @@ namespace OpenDeepWiki.Postgresql.Migrations
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("text");
 
+                    b.Property<string>("ExternalChangedFiles")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExternalTargetRevision")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 

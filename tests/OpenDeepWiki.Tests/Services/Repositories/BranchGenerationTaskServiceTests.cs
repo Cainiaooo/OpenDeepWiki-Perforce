@@ -101,6 +101,27 @@ public class BranchGenerationTaskServiceTests
     }
 
     [Fact]
+    public async Task EnqueueFullGenerationAsync_PersistsTargetCommitIdOnFirstSave()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var branch = SeedBranchWithDocument(context, repository.Id, "main");
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+
+        var result = await service.EnqueueFullGenerationAsync(
+            repository.Id,
+            branch.BranchId,
+            targetCommitId: "4242");
+
+        Assert.True(result.Success);
+        Assert.Equal("4242", result.Task?.TargetCommitId);
+        var stored = await context.BranchGenerationTasks.SingleAsync();
+        Assert.Equal("4242", stored.TargetCommitId);
+    }
+
+    [Fact]
     public async Task EnqueueFullGenerationAsync_WhenTaskSaveFails_ReleasesRepositoryLock()
     {
         await using var context = CreateFailingContext();

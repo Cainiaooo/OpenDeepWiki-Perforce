@@ -117,6 +117,56 @@ public class ArchiveRepositorySubmitRequest
 }
 
 /// <summary>
+/// Perforce 工作区仓库提交请求
+/// </summary>
+public class PerforceRepositorySubmitRequest
+{
+    /// <summary>
+    /// 仓库组织
+    /// </summary>
+    [Required]
+    [StringLength(100)]
+    public string OrgName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 仓库名称
+    /// </summary>
+    [Required]
+    [StringLength(100)]
+    public string RepoName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 服务器上的 Perforce 工作区根目录(p4 client root)
+    /// </summary>
+    [Required]
+    [StringLength(500)]
+    public string WorkspaceRootPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 分支名称
+    /// </summary>
+    [StringLength(200)]
+    public string BranchName { get; set; } = "main";
+
+    /// <summary>
+    /// 文档语言
+    /// </summary>
+    [Required]
+    [StringLength(50)]
+    public string LanguageCode { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 是否公开
+    /// </summary>
+    public bool IsPublic { get; set; } = false;
+
+    /// <summary>
+    /// Whether to generate a SKILL.md package descriptor for exported docs.
+    /// </summary>
+    public bool GenerateSkill { get; set; } = true;
+}
+
+/// <summary>
 /// 本地目录仓库提交请求
 /// </summary>
 public class LocalDirectoryRepositorySubmitRequest

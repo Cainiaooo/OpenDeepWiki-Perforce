@@ -143,6 +143,64 @@ public class RepositoryAnalyzerSourceTests
     }
 
     [Fact]
+    public async Task PrepareWorkspaceAsync_ShouldEnableIncrementalModeForPerforceSources()
+    {
+        var repositoriesRoot = CreateTempDirectory();
+        var sourceRoot = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(sourceRoot, "Foo.cpp"), "// v1");
+
+        var analyzer = CreateAnalyzer(
+            repositoriesRoot,
+            new RepositoryAnalyzerOptions
+            {
+                RepositoriesDirectory = repositoriesRoot,
+                AllowedLocalPathRoots = [Path.GetDirectoryName(sourceRoot)!],
+                LocalDirectoryImportMode = LocalDirectoryImportMode.Link
+            });
+
+        var repository = new Repository
+        {
+            Id = Guid.NewGuid().ToString(),
+            OwnerUserId = Guid.NewGuid().ToString(),
+            OrgName = "neon",
+            RepoName = "perforce-repo",
+            GitUrl = RepositorySource.EncodePerforcePath(sourceRoot)
+        };
+
+        // 首次导入(无历史基线)：开启增量开关，版本标识用短哨兵占位
+        // (≤40 字符，兼容 varchar(40) 的 LastCommitId)，等首个外部注入替换为真实 changelist。
+        var initial = await analyzer.PrepareWorkspaceAsync(repository, "main");
+        Assert.Equal(RepositorySourceType.Perforce, initial.SourceType);
+        Assert.True(initial.SupportsIncrementalUpdates);
+        Assert.Equal("p4-initial", initial.CommitId);
+        Assert.True(initial.CommitId.Length <= 40);
+
+        // 增量轮次(带历史基线 changelist)：不再全目录扫描，CommitId 沿用上次基线。
+        var incremental = await analyzer.PrepareWorkspaceAsync(repository, "main", previousCommitId: "12345");
+        Assert.True(incremental.SupportsIncrementalUpdates);
+        Assert.True(incremental.IsIncremental);
+        Assert.Equal("12345", incremental.CommitId);
+    }
+
+    [Fact]
+    public async Task GetChangedFilesAsync_ForPerforceSource_ReturnsEmptyForInternalDiff()
+    {
+        var analyzer = CreateAnalyzer(CreateTempDirectory());
+        var workspace = new RepositoryWorkspace
+        {
+            Organization = "neon",
+            RepositoryName = "perforce-repo",
+            SourceType = RepositorySourceType.Perforce,
+            SupportsIncrementalUpdates = true,
+            WorkingDirectory = CreateTempDirectory()
+        };
+
+        var changed = await analyzer.GetChangedFilesAsync(workspace, "100", "200");
+
+        Assert.Empty(changed);
+    }
+
+    [Fact]
     public async Task PrepareWorkspaceAsync_WhenRepositoryHasMultipleBranches_UsesTargetBranchContent()
     {
         var repositoriesRoot = CreateTempDirectory();

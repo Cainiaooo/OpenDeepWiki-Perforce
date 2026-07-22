@@ -176,6 +176,36 @@ public class RepositoryService(
             0);
     }
 
+    [HttpPost("/submit-perforce")]
+    public async Task<Repository> SubmitPerforceAsync([FromBody] PerforceRepositorySubmitRequest request)
+    {
+        var currentUserId = GetCurrentUserId();
+        var normalizedPath = NormalizeLocalDirectoryPath(request.WorkspaceRootPath);
+
+        if (!Directory.Exists(normalizedPath))
+        {
+            throw new DirectoryNotFoundException("Perforce 工作区根目录不存在");
+        }
+
+        EnsureLocalPathAllowed(normalizedPath);
+
+        // Perforce 工作区以本地目录形式挂载；增量变更由外部脚本经
+        // /incremental-update/external 端点注入 changelist 变更文件列表。
+        return await CreateRepositoryAsync(
+            currentUserId,
+            RepositorySource.EncodePerforcePath(normalizedPath),
+            request.RepoName,
+            request.OrgName,
+            NormalizeBranchName(request.BranchName),
+            request.LanguageCode,
+            request.IsPublic,
+            request.GenerateSkill,
+            null,
+            null,
+            0,
+            0);
+    }
+
     [HttpPost("/assign")]
     public async Task<RepositoryAssignment> AssignAsync([FromBody] RepositoryAssignRequest request)
     {

@@ -11,11 +11,15 @@ public interface IIncrementalUpdateService
     /// </summary>
     /// <param name="repositoryId">仓库ID</param>
     /// <param name="branchId">分支ID</param>
+    /// <param name="externalChangedFilesJson">外部注入的变更文件列表(JSON 数组)，非空时优先于内部 diff。</param>
+    /// <param name="externalTargetRevision">外部注入的目标版本标识(如 Perforce changelist 号)。</param>
     /// <param name="cancellationToken">取消令牌</param>
     /// <returns>更新结果</returns>
     Task<IncrementalUpdateResult> ProcessIncrementalUpdateAsync(
         string repositoryId,
         string branchId,
+        string? externalChangedFilesJson = null,
+        string? externalTargetRevision = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -40,6 +44,25 @@ public interface IIncrementalUpdateService
     Task<string> TriggerManualUpdateAsync(
         string repositoryId,
         string branchId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 外部(如 Perforce CI)注入变更文件列表以触发增量更新。
+    /// 创建一个高优先级、携带外部变更列表与目标版本的增量更新任务。
+    /// </summary>
+    /// <param name="repositoryId">仓库ID</param>
+    /// <param name="branchId">分支ID</param>
+    /// <param name="targetRevision">目标版本标识(如 Perforce changelist 号)。</param>
+    /// <param name="changedFiles">新增/修改的文件相对路径列表。</param>
+    /// <param name="deletedFiles">删除的文件相对路径列表(当前引擎不处理删除，仅记录)。</param>
+    /// <param name="cancellationToken">取消令牌</param>
+    /// <returns>创建或复用的任务ID</returns>
+    Task<string> TriggerExternalUpdateAsync(
+        string repositoryId,
+        string branchId,
+        string? targetRevision,
+        IReadOnlyList<string> changedFiles,
+        IReadOnlyList<string>? deletedFiles = null,
         CancellationToken cancellationToken = default);
 }
 

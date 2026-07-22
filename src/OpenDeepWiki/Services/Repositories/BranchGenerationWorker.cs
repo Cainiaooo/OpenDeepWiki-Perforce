@@ -98,7 +98,12 @@ public sealed class BranchGenerationWorker(
                     cancellationToken: stoppingToken);
             }
 
-            var targetCommitId = await branchProcessor.ProcessBranchAsync(
+            // A phase-two Perforce event can pre-populate the numeric target when a large interval
+            // is promoted to full generation. PrepareWorkspaceAsync intentionally uses the
+            // non-numeric p4-initial sentinel for a forced full scan, so preserve the event target
+            // after successful generation instead of regressing the branch baseline to that sentinel.
+            var requestedTargetCommitId = task.TargetCommitId;
+            var processedCommitId = await branchProcessor.ProcessBranchAsync(
                 context,
                 repository,
                 branch,
@@ -106,6 +111,10 @@ public sealed class BranchGenerationWorker(
                 forceFullGeneration: true,
                 stoppingToken);
 
+            var targetCommitId = ResolveCompletedTargetCommitId(
+                repository.SourceType,
+                requestedTargetCommitId,
+                processedCommitId);
             task.TargetCommitId = targetCommitId;
             task.Status = BranchGenerationTaskStatus.Completed;
             task.CompletedAt = DateTime.UtcNow;
@@ -115,6 +124,7 @@ public sealed class BranchGenerationWorker(
             branch.LastGenerationTaskId = task.Id;
             branch.LastGenerationError = null;
             branch.LastGenerationCompletedAt = task.CompletedAt;
+            branch.LastCommitId = targetCommitId;
             branch.UpdateTimestamp();
 
             await context.SaveChangesAsync(stoppingToken);
@@ -143,6 +153,21 @@ public sealed class BranchGenerationWorker(
                 task.Id,
                 CancellationToken.None);
         }
+    }
+
+    internal static string? ResolveCompletedTargetCommitId(
+        RepositorySourceType sourceType,
+        string? requestedTargetCommitId,
+        string? processedCommitId)
+    {
+        if (sourceType == RepositorySourceType.Perforce
+            && long.TryParse(requestedTargetCommitId, out var requestedCl)
+            && requestedCl > 0)
+        {
+            return requestedCl.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return processedCommitId;
     }
 
     private async Task<ClaimedBranchGenerationTask?> TryClaimTaskAsync(

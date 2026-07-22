@@ -184,6 +184,38 @@ public class IncrementalUpdateWorkerTests
     }
 
     [Fact]
+    public async Task CheckScheduledUpdatesAsync_ForPerforceSource_DoesNotCreateTaskAndSkipsRemoteLookup()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(
+            context,
+            updateIntervalMinutes: 60,
+            lastUpdateCheckAt: DateTime.UtcNow.AddHours(-2),
+            gitUrl: RepositorySource.EncodePerforcePath("/tmp/p4-workspace"));
+        // changelist 号(纯数字)作为基线，验证不会被 hex 判断误伤/误标准化。
+        SeedBranch(context, repository.Id, "main", "1234567");
+        await context.SaveChangesAsync();
+
+        var worker = CreateWorker();
+
+        // Strict 分析器不应被调用：Perforce 在查询 remote HEAD 之前就被跳过(事件驱动)。
+        await InvokeCheckScheduledUpdatesAsync(
+            worker,
+            context,
+            Mock.Of<IGitPlatformService>(),
+            new Mock<IRepositoryAnalyzer>(MockBehavior.Strict).Object);
+
+        Assert.Empty(await context.IncrementalUpdateTasks.ToListAsync());
+
+        var updatedRepository = await context.Repositories.SingleAsync(r => r.Id == repository.Id);
+        Assert.True(updatedRepository.LastUpdateCheckAt > repository.CreatedAt);
+
+        // 基线 changelist 保持不变(没有被 NormalizeSnapshotBaseline 误改)。
+        var updatedBranch = await context.RepositoryBranches.SingleAsync(b => b.RepositoryId == repository.Id);
+        Assert.Equal("1234567", updatedBranch.LastCommitId);
+    }
+
+    [Fact]
     public async Task CheckScheduledUpdatesAsync_WhenPendingTaskExists_DoesNotCreateDuplicate()
     {
         using var context = CreateContext();

@@ -67,6 +67,19 @@ public class IncrementalUpdateTask : AggregateRoot<string>
     public string? TargetCommitId { get; set; }
 
     /// <summary>
+    /// 外部（如 Perforce CI）注入的变更文件相对路径列表，JSON 数组；非空时优先于内部 diff。
+    /// </summary>
+    public string? ExternalChangedFiles { get; set; }
+
+    /// <summary>
+    /// 外部注入的目标版本标识（如 Perforce changelist 号）。
+    /// 长度与 <see cref="TargetCommitId"/> / <c>RepositoryBranch.LastCommitId</c> 对齐为 40，
+    /// 避免推进基线时因列长不一致在 PostgreSQL 上写入失败。
+    /// </summary>
+    [StringLength(40)]
+    public string? ExternalTargetRevision { get; set; }
+
+    /// <summary>
     /// 任务状态
     /// </summary>
     public IncrementalUpdateStatus Status { get; set; } = IncrementalUpdateStatus.Pending;
