@@ -9,7 +9,12 @@ public enum RepositorySourceType
 {
     Git = 0,
     Archive = 1,
-    LocalDirectory = 2
+    LocalDirectory = 2,
+
+    /// <summary>
+    /// Perforce 工作区（以本地目录形式挂载，增量变更通过外部注入 changelist 提供）。
+    /// </summary>
+    Perforce = 3
 }
 
 /// <summary>
@@ -35,6 +40,7 @@ public static class RepositorySource
 {
     private const string ArchivePrefix = "archive::";
     private const string LocalDirectoryPrefix = "local::";
+    private const string PerforcePrefix = "p4::";
 
     public static string EncodeArchivePath(string archivePath)
     {
@@ -44,6 +50,14 @@ public static class RepositorySource
     public static string EncodeLocalDirectoryPath(string localPath)
     {
         return LocalDirectoryPrefix + EncodeLocation(localPath);
+    }
+
+    /// <summary>
+    /// 将 Perforce 工作区根目录编码为持久化来源字符串（复用 Repository.GitUrl 字段惯例）。
+    /// </summary>
+    public static string EncodePerforcePath(string workspaceRootPath)
+    {
+        return PerforcePrefix + EncodeLocation(workspaceRootPath);
     }
 
     public static RepositorySourceInfo Parse(string storedSource)
@@ -67,12 +81,24 @@ public static class RepositorySource
                 DecodeLocation(storedSource[LocalDirectoryPrefix.Length..]));
         }
 
+        if (storedSource.StartsWith(PerforcePrefix, StringComparison.Ordinal))
+        {
+            return new RepositorySourceInfo(
+                RepositorySourceType.Perforce,
+                DecodeLocation(storedSource[PerforcePrefix.Length..]));
+        }
+
         return new RepositorySourceInfo(RepositorySourceType.Git, storedSource);
     }
 
     public static bool IsGit(string storedSource)
     {
         return Parse(storedSource).SourceType == RepositorySourceType.Git;
+    }
+
+    public static bool IsPerforce(string storedSource)
+    {
+        return Parse(storedSource).SourceType == RepositorySourceType.Perforce;
     }
 
     private static string EncodeLocation(string location)

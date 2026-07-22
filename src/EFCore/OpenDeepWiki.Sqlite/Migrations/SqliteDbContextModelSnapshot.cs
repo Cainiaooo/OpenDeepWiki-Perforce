@@ -810,6 +810,13 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.Property<string>("ErrorMessage")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("ExternalChangedFiles")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExternalTargetRevision")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("INTEGER");
 

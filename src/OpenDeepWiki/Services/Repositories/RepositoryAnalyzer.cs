@@ -219,6 +219,21 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
             await PrepareArchiveWorkspaceAsync(workspace, cancellationToken);
             workspace.CommitId = ComputeDirectorySnapshotId(workspace.WorkingDirectory);
         }
+        else if (workspace.SourceType == RepositorySourceType.Perforce)
+        {
+            // Perforce 工作区以本地目录形式挂载，但支持增量：变更文件列表由外部
+            // (Perforce CI 脚本) 注入，版本标识使用 changelist 号。
+            await PrepareLocalDirectoryWorkspaceAsync(workspace, cancellationToken);
+            workspace.SupportsIncrementalUpdates = true;
+
+            // 版本标识由外部注入的 changelist 驱动。首次导入(无历史基线)用短哨兵占位
+            // (≤40 字符，兼容 varchar(40) 的 RepositoryBranch.LastCommitId；64 字符目录快照
+            // 会在 PostgreSQL 首次全量落库时超长报错)，首个外部注入即用真实 changelist 替换；
+            // 已有基线时直接沿用。Perforce 变更判定完全依赖外部注入，无需目录快照。
+            workspace.CommitId = string.IsNullOrEmpty(previousCommitId)
+                ? PerforceInitialBaseline
+                : previousCommitId;
+        }
         else if (TryResolveLocalGitSource(workspace.SourceLocation, out var localGitSource, out var localGitFailureReason))
         {
             await PrepareLocalGitWorkspaceAsync(workspace, localGitSource, cancellationToken);
@@ -307,6 +322,16 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
             _logger.LogInformation(
                 "Repository source does not support incremental updates. Repository: {Org}/{Repo}, SourceType: {SourceType}",
                 workspace.Organization, workspace.RepositoryName, workspace.SourceType);
+            return Task.FromResult(Array.Empty<string>());
+        }
+
+        if (workspace.SourceType == RepositorySourceType.Perforce)
+        {
+            // Perforce 变更文件列表由外部注入(IncrementalUpdateService 使用 task.ExternalChangedFiles)，
+            // 内部无法从本地目录 diff 出 changelist 级变更，故返回空集，避免误触发 git 操作。
+            _logger.LogInformation(
+                "Perforce source relies on externally injected change lists; internal diff returns an empty set. Repository: {Org}/{Repo}",
+                workspace.Organization, workspace.RepositoryName);
             return Task.FromResult(Array.Empty<string>());
         }
 
@@ -1309,6 +1334,12 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
         LibGit2,
         GitCli
     }
+
+    /// <summary>
+    /// Perforce 源首次导入(无历史基线)时的占位版本标识。短于 40 字符以兼容
+    /// RepositoryBranch.LastCommitId 列；首个外部注入的 changelist 会将其替换。
+    /// </summary>
+    private const string PerforceInitialBaseline = "p4-initial";
 
     private static string ComputeDirectorySnapshotId(string directoryPath)
     {

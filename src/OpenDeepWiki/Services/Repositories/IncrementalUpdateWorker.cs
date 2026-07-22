@@ -115,7 +115,11 @@ public class IncrementalUpdateWorker : BackgroundService
                 context, task, IncrementalUpdateStatus.Processing, null, stoppingToken);
 
             var result = await updateService.ProcessIncrementalUpdateAsync(
-                task.RepositoryId, task.BranchId, stoppingToken);
+                task.RepositoryId,
+                task.BranchId,
+                task.ExternalChangedFiles,
+                task.ExternalTargetRevision,
+                stoppingToken);
 
             if (result.Success)
             {
@@ -293,6 +297,20 @@ public class IncrementalUpdateWorker : BackgroundService
                 .ToListAsync(stoppingToken);
 
             var sourceInfo = RepositorySource.Parse(repository.GitUrl);
+
+            // Perforce 仅事件驱动(外部注入 changelist)，不参与定时空转调度：
+            // 否则 GetRemoteBranchHeadCommitAsync 对非 Git 源返回 null 会导致每轮无条件建任务。
+            if (sourceInfo.SourceType == RepositorySourceType.Perforce)
+            {
+                _logger.LogDebug(
+                    "Skipping scheduled updates for Perforce repository (external injection only). Repository: {Org}/{Repo}",
+                    repository.OrgName, repository.RepoName);
+                repository.LastUpdateCheckAt = DateTime.UtcNow;
+                repository.UpdatedAt = DateTime.UtcNow;
+                await context.SaveChangesAsync(stoppingToken);
+                return;
+            }
+
             var saveChanges = false;
 
             foreach (var branch in branches)
