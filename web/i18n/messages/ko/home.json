@@ -187,6 +187,18 @@
       "ja": "일본어",
       "ko": "한국어",
       "pl": "폴란드어"
+    },
+    "view": {
+      "tree": "트리",
+      "grid": "그리드"
+    },
+    "tree": {
+      "title": "저장소 트리",
+      "all": "전체 저장소",
+      "count": "저장소 {count}개",
+      "emptyFolder": "이 폴더에는 저장소가 없습니다",
+      "expandFolder": "폴더 펼치기",
+      "collapseFolder": "폴더 접기"
     }
   }
 }

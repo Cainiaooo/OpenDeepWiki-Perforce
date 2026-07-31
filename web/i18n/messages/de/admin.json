@@ -234,7 +234,9 @@
         "triggerIncrementalFailed": "Inkrementelles Update konnte nicht ausgelöst werden",
         "refreshTaskFailed": "Aufgabenstatus konnte nicht aktualisiert werden",
         "retryTaskSuccess": "Aufgabenwiederholung eingeleitet",
-        "retryTaskFailed": "Aufgabe konnte nicht wiederholt werden"
+        "retryTaskFailed": "Aufgabe konnte nicht wiederholt werden",
+        "saveScanPlanFailed": "Scan-Strategie konnte nicht gespeichert werden",
+        "reevaluateScanPlanFailed": "Scan-Strategie konnte nicht neu bewertet werden"
       },
       "tabs": {
         "branches": "Branches",

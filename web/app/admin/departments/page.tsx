@@ -315,7 +315,7 @@ export default function AdminDepartmentsPage() {
       setShowDialog(false);
       fetchData();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "操作失败";
+      const message = error instanceof Error ? error.message : "";
       toast.error(message || t('admin.toast.operationFailed'));
     }
   };
@@ -331,8 +331,8 @@ export default function AdminDepartmentsPage() {
       }
       fetchData();
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "删除失败";
-      toast.error(message || t('admin.toast.operationFailed'));
+      const message = error instanceof Error ? error.message : "";
+      toast.error(message || t('admin.toast.deleteFailed'));
     }
   };
 
@@ -378,8 +378,8 @@ export default function AdminDepartmentsPage() {
       setShowAddUserDialog(false);
       fetchDeptDetail(selectedDept);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "添加失败";
-      toast.error(message || t('admin.toast.operationFailed'));
+      const message = error instanceof Error ? error.message : "";
+      toast.error(message || t('admin.toast.addFailed'));
     }
   };
 
@@ -435,8 +435,8 @@ export default function AdminDepartmentsPage() {
       setShowAddRepoDialog(false);
       fetchDeptDetail(selectedDept);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : "分配失败";
-      toast.error(message || t('admin.toast.operationFailed'));
+      const message = error instanceof Error ? error.message : "";
+      toast.error(message || t('admin.toast.assignFailed'));
     }
   };
 

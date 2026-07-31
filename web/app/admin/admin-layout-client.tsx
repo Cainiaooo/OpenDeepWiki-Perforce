@@ -4,6 +4,7 @@ import React, { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
+import { LanguageToggle } from "@/components/language-toggle";
 import { useTranslations } from "@/hooks/use-translations";
 import {
   SidebarInset,
@@ -50,6 +51,9 @@ export default function AdminLayoutClient({
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 h-4" />
           <h1 className="text-sm font-semibold">{t("common.adminPanel")}</h1>
+          <div className="ml-auto flex items-center gap-2">
+            <LanguageToggle />
+          </div>
         </header>
         <main className="flex-1 overflow-auto">
           <div className="container mx-auto p-6">

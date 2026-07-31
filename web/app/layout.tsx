@@ -4,24 +4,28 @@ import RouteProviders from "@/app/route-providers";
 import { getSiteUrl, SITE_DESCRIPTION, SITE_NAME } from "@/lib/repo-seo";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  metadataBase: getSiteUrl(),
-  applicationName: SITE_NAME,
-  title: {
-    default: SITE_NAME,
-    template: `%s | ${SITE_NAME}`,
-  },
-  description: SITE_DESCRIPTION,
-  icons: {
-    icon: "/favicon.png",
-  },
-  openGraph: {
-    title: SITE_NAME,
+export const dynamic = "force-dynamic";
+
+export function generateMetadata(): Metadata {
+  return {
+    metadataBase: getSiteUrl(),
+    applicationName: SITE_NAME,
+    title: {
+      default: SITE_NAME,
+      template: `%s | ${SITE_NAME}`,
+    },
     description: SITE_DESCRIPTION,
-    siteName: SITE_NAME,
-    type: "website",
-  },
-};
+    icons: {
+      icon: "/favicon.png",
+    },
+    openGraph: {
+      title: SITE_NAME,
+      description: SITE_DESCRIPTION,
+      siteName: SITE_NAME,
+      type: "website",
+    },
+  };
+}
 
 export default async function RootLayout({
   children,

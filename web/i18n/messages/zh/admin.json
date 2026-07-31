@@ -234,7 +234,9 @@
         "triggerIncrementalFailed": "触发增量更新失败",
         "refreshTaskFailed": "刷新任务状态失败",
         "retryTaskSuccess": "任务重试已发起",
-        "retryTaskFailed": "重试任务失败"
+        "retryTaskFailed": "重试任务失败",
+        "saveScanPlanFailed": "保存扫描策略失败",
+        "reevaluateScanPlanFailed": "重新评估扫描策略失败"
       },
       "tabs": {
         "branches": "分支",

@@ -86,4 +86,5 @@
     restart: unless-stopped
     environment:
       - NODE_ENV=production
+      - SITE_URL=${SITE_URL:-http://localhost:8090}
       - API_PROXY_URL=http://opendeepwiki:8080

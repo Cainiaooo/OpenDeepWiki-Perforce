@@ -234,7 +234,9 @@
         "triggerIncrementalFailed": "Échec du déclenchement de la mise à jour incrémentale",
         "refreshTaskFailed": "Échec de l'actualisation du statut de la tâche",
         "retryTaskSuccess": "Nouvelle tentative de tâche initiée",
-        "retryTaskFailed": "Échec de la nouvelle tentative de tâche"
+        "retryTaskFailed": "Échec de la nouvelle tentative de tâche",
+        "saveScanPlanFailed": "Échec de l'enregistrement de la stratégie d'analyse",
+        "reevaluateScanPlanFailed": "Échec de la réévaluation de la stratégie d'analyse"
       },
       "tabs": {
         "branches": "Branches",

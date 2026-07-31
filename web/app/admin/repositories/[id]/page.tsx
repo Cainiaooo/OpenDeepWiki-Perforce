@@ -825,7 +825,7 @@ export default function AdminRepositoryManagementPage() {
   const handleRegenerateRepository = async () => {
     if (!repositoryId) return;
     if (isScanPlanDirty) {
-      toast.warning(t("admin.repositories.management.scanPlan.saveFirst") || "扫描策略已被修改，请先保存");
+      toast.warning(t("admin.repositories.management.scanPlan.saveFirst"));
       return;
     }
     if (!window.confirm(t("admin.repositories.management.confirmRegenerateAll"))) return;
@@ -1038,7 +1038,7 @@ export default function AdminRepositoryManagementPage() {
       return;
     }
     if (isScanPlanDirty) {
-      toast.warning(t("admin.repositories.management.scanPlan.saveFirst") || "扫描策略已被修改，请先保存");
+      toast.warning(t("admin.repositories.management.scanPlan.saveFirst"));
       return;
     }
 
@@ -1107,7 +1107,7 @@ export default function AdminRepositoryManagementPage() {
       toast.success(t("admin.repositories.management.scanPlan.saveSuccess"));
     } catch (error) {
       console.error("Failed to save scan plan:", error);
-      toast.error(t("admin.repositories.management.toasts.saveScanPlanFailed") || "保存扫描策略失败");
+      toast.error(t("admin.repositories.management.toasts.saveScanPlanFailed"));
     } finally {
       setSavingScanPlan(false);
     }
@@ -1123,14 +1123,14 @@ export default function AdminRepositoryManagementPage() {
         setScanPlan(result.data);
         toast.success(result.message || t("admin.repositories.management.scanPlan.reevaluateSuccess"));
       } else {
-        toast.error(result.message || t("admin.repositories.management.toasts.reevaluateScanPlanFailed") || "重新评估扫描策略失败");
+        toast.error(result.message || t("admin.repositories.management.toasts.reevaluateScanPlanFailed"));
         if (result.data) {
           setScanPlan(result.data);
         }
       }
     } catch (error) {
       console.error("Failed to reevaluate scan plan:", error);
-      toast.error(t("admin.repositories.management.toasts.reevaluateScanPlanFailed") || "重新评估扫描策略失败");
+      toast.error(t("admin.repositories.management.toasts.reevaluateScanPlanFailed"));
     } finally {
       setReevaluatingScanPlan(false);
     }

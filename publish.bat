@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 
@@ -147,6 +147,9 @@ echo # 启动前端服务时设置此环境变量
 echo.
 echo # 后端 API 代理地址（运行时动态读取）
 echo API_PROXY_URL=http://localhost:8080
+echo.
+echo # 公开站点地址（用于 sitemap、robots.txt 和 SEO 元数据）
+echo SITE_URL=http://localhost:3000
 ) > "%FRONTEND_DIR%\.env.example"
 
 echo 前端构建完成！
@@ -193,6 +196,21 @@ echo.
 echo :: 设置端口
 echo set PORT=3000
 echo set HOSTNAME=0.0.0.0
+echo.
+echo if exist ".env" ^(
+echo     for /f "usebackq tokens=1,* delims==" %%%%a in ^(".env"^) do ^(
+echo         if not "%%%%a"=="" if not "%%%%a:~0,1%%"=="#" ^(
+echo             set "%%%%a=%%%%b"
+echo         ^)
+echo     ^)
+echo ^)
+echo if exist ".env.local" ^(
+echo     for /f "usebackq tokens=1,* delims==" %%%%a in ^(".env.local"^) do ^(
+echo         if not "%%%%a"=="" if not "%%%%a:~0,1%%"=="#" ^(
+echo             set "%%%%a=%%%%b"
+echo         ^)
+echo     ^)
+echo ^)
 echo.
 echo echo 前端服务地址: http://localhost:%%PORT%%
 echo echo.

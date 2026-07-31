@@ -234,7 +234,9 @@
         "triggerIncrementalFailed": "Error al activar la actualización incremental",
         "refreshTaskFailed": "Error al actualizar el estado de la tarea",
         "retryTaskSuccess": "Reintento de tarea iniciado",
-        "retryTaskFailed": "Error al reintentar la tarea"
+        "retryTaskFailed": "Error al reintentar la tarea",
+        "saveScanPlanFailed": "Error al guardar la estrategia de escaneo",
+        "reevaluateScanPlanFailed": "Error al reevaluar la estrategia de escaneo"
       },
       "tabs": {
         "branches": "Ramas",

@@ -10,8 +10,8 @@ const MAX_DESCRIPTION_LENGTH = 160;
 
 export function getSiteUrl(): URL {
   const rawUrl =
-    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
     process.env.SITE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_SITE_URL?.trim() ||
     process.env.VERCEL_URL?.trim() ||
     DEFAULT_SITE_URL;
 

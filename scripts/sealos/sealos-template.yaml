@@ -37,6 +37,13 @@ spec:
       type: string
       value: https://api.openai.com/v1
   inputs:
+    # 站点配置
+    site_url:
+      description: '公开站点 URL（用于 sitemap、robots.txt 和 SEO 元数据）'
+      type: string
+      default: https://${{ defaults.web_host }}.${{ SEALOS_CLOUD_DOMAIN }}
+      required: true
+
     # 数据库配置
     db_type:
       description: '数据库类型 (sqlite 或 postgresql)'
@@ -374,6 +381,8 @@ spec:
               value: production
             - name: API_PROXY_URL
               value: http://${{ defaults.app_name }}:8080
+            - name: SITE_URL
+              value: ${{ inputs.site_url }}
           resources:
             requests:
               cpu: 50m

@@ -49,9 +49,11 @@ import {
   RepositoryListResponse,
 } from "@/lib/admin-api";
 import { getRepositorySourceTypeLabelKey, isGitRepositorySource } from "@/lib/repository-source";
+import { RepositorySubmitForm } from "@/components/repo/repository-submit-form";
 import {
   Loader2,
   Search,
+  Plus,
   Trash2,
   Eye,
   RefreshCw,
@@ -88,6 +90,7 @@ export default function AdminRepositoriesPage() {
   const router = useRouter();
   const [data, setData] = useState<RepositoryListResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isSubmitDialogOpen, setIsSubmitDialogOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -138,6 +141,11 @@ export default function AdminRepositoriesPage() {
       setLoading(false);
     }
   }, [page, search, status, t]);
+
+  const handleSubmitSuccess = useCallback(() => {
+    setIsSubmitDialogOpen(false);
+    fetchData();
+  }, [fetchData]);
 
   useEffect(() => {
     fetchData();
@@ -299,12 +307,18 @@ export default function AdminRepositoriesPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in-0 duration-500">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">{t('admin.repositories.title')}</h1>
-        <Button variant="outline" onClick={fetchData} disabled={loading} className="transition-all duration-200 hover:-translate-y-0.5">
-          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          {t('admin.common.refresh')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => setIsSubmitDialogOpen(true)} className="transition-all duration-200 hover:-translate-y-0.5">
+            <Plus className="mr-2 h-4 w-4" />
+            {t('home.repository.submitTitle')}
+          </Button>
+          <Button variant="outline" onClick={fetchData} disabled={loading} className="transition-all duration-200 hover:-translate-y-0.5">
+            <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            {t('admin.common.refresh')}
+          </Button>
+        </div>
       </div>
 
       {/* 搜索和筛选 */}
@@ -342,32 +356,36 @@ export default function AdminRepositoriesPage() {
         <div className="grid gap-3 md:grid-cols-3">
           <Card className="p-3">
             <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-              <span>当前页完成率</span>
+              <span>{t("admin.repositories.pageCompletionRate")}</span>
               <span>{overview.completedRate}%</span>
             </div>
             <Progress value={overview.completedRate} className="h-2.5" />
             <p className="mt-2 text-xs text-muted-foreground">
-              完成 {overview.completedCount} / {overview.pageCount}，处理中 {overview.processingCount}
+              {t("admin.repositories.completedOfTotal", {
+                completed: overview.completedCount,
+                total: overview.pageCount,
+                processing: overview.processingCount,
+              })}
             </p>
           </Card>
           <Card className="p-3">
             <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-              <span>公开仓库占比</span>
+              <span>{t("admin.repositories.publicRepoRatio")}</span>
               <span>{overview.publicRate}%</span>
             </div>
             <Progress value={overview.publicRate} className="h-2.5" />
             <p className="mt-2 text-xs text-muted-foreground">
-              失败仓库 {overview.failedCount}，建议优先排查
+              {t("admin.repositories.failedPrioritize", { count: overview.failedCount })}
             </p>
           </Card>
           <Card className="p-3">
             <div className="mb-2 flex items-center justify-between text-xs text-muted-foreground">
-              <span>当前页选中占比</span>
+              <span>{t("admin.repositories.pageSelectionRatio")}</span>
               <span>{overview.selectedRate}%</span>
             </div>
             <Progress value={overview.selectedRate} className="h-2.5" />
             <p className="mt-2 text-xs text-muted-foreground">
-              已选择 {selectedIds.size} 项用于批量操作
+              {t("admin.repositories.selectedForBatch", { count: selectedIds.size })}
             </p>
           </Card>
         </div>
@@ -376,8 +394,8 @@ export default function AdminRepositoriesPage() {
       <Card className="p-4 transition-all duration-300 hover:shadow-sm">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-semibold">当前页状态分布</p>
-            <Badge variant="outline">共 {overview.pageCount} 条</Badge>
+            <p className="text-sm font-semibold">{t("admin.repositories.statusDistribution")}</p>
+            <Badge variant="outline">{t("admin.repositories.totalItems", { count: overview.pageCount })}</Badge>
           </div>
           <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
             <div className="flex h-full w-full">
@@ -495,7 +513,7 @@ export default function AdminRepositoriesPage() {
                               type="button"
                               className="font-medium text-left transition-all duration-200 hover:text-primary hover:underline underline-offset-4"
                               onClick={() => router.push(`/${repo.id}`)}
-                              title="管理仓库"
+                              title={t("admin.repositories.manageRepo")}
                             >
                               {repo.orgName}/{repo.repoName}
                             </button>
@@ -634,7 +652,7 @@ export default function AdminRepositoriesPage() {
                   ) : (
                     <tr>
                       <td colSpan={7} className="px-4 py-16 text-center text-sm text-muted-foreground animate-in fade-in-0 duration-200">
-                        当前筛选条件下暂无仓库数据
+                        {t("admin.repositories.noReposForFilter")}
                       </td>
                     </tr>
                   )}
@@ -676,6 +694,12 @@ export default function AdminRepositoriesPage() {
           </>
         )}
       </Card>
+
+      <Dialog open={isSubmitDialogOpen} onOpenChange={setIsSubmitDialogOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+          <RepositorySubmitForm onSuccess={handleSubmitSuccess} />
+        </DialogContent>
+      </Dialog>
 
       {/* 详情对话框 */}
       <Dialog open={!!selectedRepo} onOpenChange={() => setSelectedRepo(null)}>
