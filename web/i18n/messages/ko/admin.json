@@ -194,7 +194,9 @@
         "triggerIncrementalFailed": "증분 업데이트 실행에 실패했습니다",
         "refreshTaskFailed": "작업 상태 새로고침에 실패했습니다",
         "retryTaskSuccess": "작업 재시도가 시작되었습니다",
-        "retryTaskFailed": "작업 재시도에 실패했습니다"
+        "retryTaskFailed": "작업 재시도에 실패했습니다",
+        "saveScanPlanFailed": "스캔 전략 저장에 실패했습니다",
+        "reevaluateScanPlanFailed": "스캔 전략 재평가에 실패했습니다"
       },
       "tabs": {
         "branches": "브랜치",
@@ -276,7 +278,37 @@
         "actions": "작업"
       },
       "retryFailedTask": "이 실패한 작업 재시도",
-      "retryOnlyFailed": "실패한 작업만 재시도할 수 있습니다"
+      "retryOnlyFailed": "실패한 작업만 재시도할 수 있습니다",
+      "scanPlan": {
+        "title": "스캔 전략 설정",
+        "hint": "전략은 이 저장소의 모든 브랜치에 적용됩니다.",
+        "mode": "전략 모드",
+        "modeAuto": "자동 평가 (Auto)",
+        "modeManual": "수동 설정 (Manual)",
+        "resolvedPlan": "적용된 스캔 전략 (Resolved Plan)",
+        "source": "전략 출처",
+        "directoryTreeDepth": "디렉터리 트리 최대 깊이",
+        "fileListDepth": "파일 목록 최대 깊이",
+        "maxTreeNodes": "최대 트리 노드 수",
+        "maxFilesPerDirectory": "디렉터리당 최대 파일 수",
+        "maxTotalFiles": "최대 전체 파일 수",
+        "extraExcludedDirs": "추가 제외 디렉터리 (쉼표로 구분)",
+        "reason": "평가 사유 / 근거",
+        "confidence": "신뢰도",
+        "updatedAt": "수정 시간",
+        "reevaluate": "다시 평가",
+        "reevaluating": "평가 중...",
+        "save": "설정 저장",
+        "saving": "저장 중...",
+        "saveSuccess": "스캔 전략을 저장했습니다",
+        "reevaluateSuccess": "스캔 전략을 다시 평가했습니다",
+        "invalidNumber": "유효한 숫자를 입력해 주세요",
+        "minLimit": "값은 0보다 작을 수 없습니다",
+        "manualConfig": "수동 매개변수",
+        "autoPlanTitle": "평가된 매개변수",
+        "noPlan": "전략 데이터가 없습니다",
+        "saveFirst": "스캔 전략이 변경되었습니다. 먼저 저장해 주세요"
+      }
     }
   },
   "users": {

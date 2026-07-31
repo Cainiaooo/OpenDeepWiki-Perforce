@@ -234,7 +234,9 @@
         "triggerIncrementalFailed": "Falha ao disparar atualização incremental",
         "refreshTaskFailed": "Falha ao atualizar o status da tarefa",
         "retryTaskSuccess": "Repetição da tarefa iniciada",
-        "retryTaskFailed": "Falha ao repetir a tarefa"
+        "retryTaskFailed": "Falha ao repetir a tarefa",
+        "saveScanPlanFailed": "Falha ao salvar estratégia de varredura",
+        "reevaluateScanPlanFailed": "Falha ao reavaliar estratégia de varredura"
       },
       "tabs": {
         "branches": "Branches",

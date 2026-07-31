@@ -170,9 +170,12 @@ copy publish\frontend\.env.example publish\frontend\.env.local
 ```ini title="publish/frontend/.env.local"
 # 后端 API 代理地址
 API_PROXY_URL=http://localhost:8080
+
+# 公开站点地址，用于 sitemap、robots.txt 和 SEO 元数据
+SITE_URL=http://localhost:3000
 ```
 
-如果后端监听地址不是默认的 `http://localhost:8080`，需要修改此值与后端 `URLS` 保持一致。
+如果后端监听地址不是默认的 `http://localhost:8080`，需要修改 `API_PROXY_URL` 与后端 `URLS` 保持一致。生产部署时，将 `SITE_URL` 改为实际的 HTTPS 访问域名；修改后需重启前端服务。
 
 ## 启动服务
 

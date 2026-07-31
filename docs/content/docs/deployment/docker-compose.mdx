@@ -108,6 +108,7 @@ services:
         condition: service_healthy
     environment:
       - NODE_ENV=production
+      - SITE_URL=${SITE_URL:-http://localhost:3000}
       - API_PROXY_URL=http://opendeepwiki:8080
 ```
 
@@ -136,6 +137,7 @@ services:
 | `CHAT_REQUEST_TYPE` | `OpenAI` | AI 提供商类型 |
 | `WIKI_PARALLEL_COUNT` | `5` | 并行 wiki 生成任务数 |
 | `WIKI_LANGUAGES` | `en,zh` | 支持的语言（逗号分隔） |
+| `SITE_URL` | `http://localhost:3000` | 公开站点 URL，用于 sitemap、robots.txt、canonical URL 和社交分享元数据 |
 
 <Callout type="warn">
   在生产环境中始终更改 `JWT_SECRET_KEY`。默认密钥仅用于开发。

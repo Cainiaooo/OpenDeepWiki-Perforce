@@ -234,7 +234,9 @@
         "triggerIncrementalFailed": "Failed to trigger incremental update",
         "refreshTaskFailed": "Failed to refresh task status",
         "retryTaskSuccess": "Task retry initiated",
-        "retryTaskFailed": "Failed to retry task"
+        "retryTaskFailed": "Failed to retry task",
+        "saveScanPlanFailed": "Failed to save scanning strategy",
+        "reevaluateScanPlanFailed": "Failed to re-evaluate scanning strategy"
       },
       "tabs": {
         "branches": "Branches",

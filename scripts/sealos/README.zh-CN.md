@@ -65,6 +65,9 @@
 
 ### 可选参数
 
+#### 站点配置
+- **site_url**: 公开站点 URL，用于 sitemap、robots.txt 和 SEO 元数据（默认使用 Sealos 自动分配的 Web 域名）
+
 #### 数据库配置
 - **db_type**: 数据库类型（默认：`sqlite`，可选：`postgresql`）
 - **connection_string**: 数据库连接字符串

@@ -194,7 +194,9 @@
         "triggerIncrementalFailed": "増分更新の実行に失敗しました",
         "refreshTaskFailed": "タスク状態の更新に失敗しました",
         "retryTaskSuccess": "タスクの再試行を開始しました",
-        "retryTaskFailed": "タスクの再試行に失敗しました"
+        "retryTaskFailed": "タスクの再試行に失敗しました",
+        "saveScanPlanFailed": "スキャン戦略の保存に失敗しました",
+        "reevaluateScanPlanFailed": "スキャン戦略の再評価に失敗しました"
       },
       "tabs": {
         "branches": "ブランチ",
@@ -276,7 +278,37 @@
         "actions": "操作"
       },
       "retryFailedTask": "この失敗したタスクを再試行",
-      "retryOnlyFailed": "失敗したタスクのみ再試行できます"
+      "retryOnlyFailed": "失敗したタスクのみ再試行できます",
+      "scanPlan": {
+        "title": "スキャン戦略の設定",
+        "hint": "戦略はこのリポジトリのすべてのブランチに適用されます。",
+        "mode": "戦略モード",
+        "modeAuto": "自動評価 (Auto)",
+        "modeManual": "手動設定 (Manual)",
+        "resolvedPlan": "適用中のスキャン戦略 (Resolved Plan)",
+        "source": "戦略のソース",
+        "directoryTreeDepth": "ディレクトリツリーの最大深度",
+        "fileListDepth": "ファイル一覧の最大深度",
+        "maxTreeNodes": "ツリーノードの最大数",
+        "maxFilesPerDirectory": "ディレクトリごとの最大ファイル数",
+        "maxTotalFiles": "合計ファイル数の上限",
+        "extraExcludedDirs": "追加の除外ディレクトリ (カンマ区切り)",
+        "reason": "評価の理由 / 根拠",
+        "confidence": "信頼度",
+        "updatedAt": "更新日時",
+        "reevaluate": "再評価",
+        "reevaluating": "評価中...",
+        "save": "設定を保存",
+        "saving": "保存中...",
+        "saveSuccess": "スキャン戦略を保存しました",
+        "reevaluateSuccess": "スキャン戦略を再評価しました",
+        "invalidNumber": "有効な数値を入力してください",
+        "minLimit": "値は 0 未満にできません",
+        "manualConfig": "手動パラメーター",
+        "autoPlanTitle": "評価されたパラメーター",
+        "noPlan": "戦略データがありません",
+        "saveFirst": "スキャン戦略が変更されています。先に保存してください"
+      }
     }
   },
   "users": {
