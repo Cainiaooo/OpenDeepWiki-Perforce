@@ -10,6 +10,12 @@
 - 导出结果是确定性事实输入，不等于最终面向人的 Wiki 正文。
 - 未导出的资产事实必须标记为未知，不能从 C++ 类型声明推断实例中的实际配置。
 
+### 导出器归属与分发
+
+- 导出器代码归属目标项目仓库（UE 插件/Commandlet/构建步骤），随项目和引擎版本一起演进与分支，不在 OpenDeepWiki 仓库内维护。
+- 导出能力必须能进入打包编辑器构建，或由构建流水线预先产出数据包；不得假设所有消费者（如仅持有打包编辑器的策划）拥有源码引擎。
+- OpenDeepWiki 侧只维护 Knowledge Package schema、公开示例夹具和摄取/验证代码，并文档化 exporter version 与 schema version 的兼容矩阵。
+
 ## 2. UE Knowledge Package
 
 定义版本化、可校验的中间格式，建议使用一份 manifest 加多份分片 JSON：

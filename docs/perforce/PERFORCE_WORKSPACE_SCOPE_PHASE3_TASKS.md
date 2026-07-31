@@ -120,6 +120,17 @@ Staging Generation → Atomic Published Wiki Snapshot
 4. [`04_AGENT_CONTEXT_DELIVERY.md`](phase3/04_AGENT_CONTEXT_DELIVERY.md)
 5. [`05_INCREMENTAL_OPERATIONS_AND_QUALITY.md`](phase3/05_INCREMENTAL_OPERATIONS_AND_QUALITY.md)
 
+### 6.1 最小纵向切片（首个可交付路径）
+
+五个工作包合计接近一次平台级改造，禁止按文档顺序全面铺开。首个端到端切片建议限定为：
+
+1. `RepositoryScopeConfiguration` 以仓库配置形式加载并解析（管理 API、预览和审计可后置）。
+2. `IRepositoryFileSelectionPolicy` 落地，接管现有 Perforce 过滤和全量扫描的文件判定。
+3. 确定性 Source Inventory 输出模块/文件清单。
+4. 覆盖审计先以报告形式输出，不接入发布门禁。
+
+Workspace Lease、staging 原子发布、生成引擎抽象、UE 导出和新 MCP 契约均在该切片验证后再展开。M0 对照实验只依赖第 1–3 项。
+
 实现前可查阅 [`IMPLEMENTATION_REFERENCES.md`](phase3/IMPLEMENTATION_REFERENCES.md)。外部项目只作为设计参考；引入代码前必须单独核对许可证、依赖、安全和维护成本。
 
 ## 7. 里程碑
@@ -191,6 +202,8 @@ M0 不阻塞 WP1 的范围与快照基础建设，但会影响 WP2 的具体生�
 - 来源无关能力放在通用层；Perforce 适配只处理 depot/workspace、CL 和 filetype 语义。
 - 生成引擎通过接口接入，避免把某个候选项目的数据结构扩散到领域实体和 API。
 - 对上游已有同类能力优先适配，不在 fork 内维护重复实现。
+- 新能力优先落在新表/新实体，通过外键关联 `DocCatalog`、`DocFile`、`BranchLanguage` 等上游活跃表；非必要不修改上游表结构和唯一约束，降低同步上游时的迁移冲突。
+- 本 fork 新增的 EF 迁移使用可识别的名称前缀（如 `P4Phase3`），便于同步上游后甄别、重放或重建。
 - 每次同步上游后运行所有来源类型回归，重点确保默认 Git 流程未被 P4 Scope 逻辑改变。
 
 ## 11. 隐私和示例约定

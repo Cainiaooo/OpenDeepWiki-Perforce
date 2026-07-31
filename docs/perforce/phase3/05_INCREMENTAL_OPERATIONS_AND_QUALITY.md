@@ -43,12 +43,13 @@
 
 ## 3. 调度、幂等和恢复
 
-- 使用 `(repository, branch, target revision, scope config version, engine version)` 作为任务幂等边界。
+- 任务幂等边界直接复用 WP1 定义的 `SnapshotIdentity`（含 `TrackedManifestHash`），发布幂等再加 Language 维度；不得在本工作包内维护另一套简化键。
 - 同一仓库同步、全量规划和发布切换互斥；无依赖领域生成可以受控并行。
 - 失败、取消、超时不推进 `LastCommitId` 或 current generation。
 - 重试复用已经成功且输入摘要一致的领域/页面产物。
 - 配置或 workspace 在执行中变化时停止发布，后续任务从新的完整身份重新开始。
 - 提供同步完成 → 发送事件 → 等待发布 → 允许下一次同步的外部 runbook。
+- 【待决策】变更获取的调度模型：当前实现为外部事件注入，候选方向是服务端固定间隔轮询区间拉取。两种模式对“空 CL 推进基线”、幂等键复用和 runbook 编排的语义不同，WP5 开工前必须定案并全文统一。
 - 保留管理员强制全量、领域重建、页面重建和回滚发布版本的能力。
 
 ## 4. 可观测性
@@ -121,16 +122,16 @@
 
 ## 7. 隐私与安全检查
 
-提交前至少执行：
+提交前至少执行本地敏感信息扫描和 git 检查。注意：写进本仓库文档的任何匹配模式都只能是占位符，直接运行不会命中真实敏感词；真实敏感词列表和可执行扫描脚本只存放在本地或 CI 私密配置中，不提交到仓库。
 
 ```powershell
-rg -n -i "真实用户名|真实主机名|真实项目名|真实Client名|本机盘符路径" `
-  docs scripts tests src
+# scan-sensitive.ps1 为本地私有脚本，模式列表不入库
+./scan-sensitive.ps1 docs scripts tests src
 git diff --check
 git status --short
 ```
 
-真实敏感词列表只存放在本地或 CI 私密配置中。日志和测试夹具使用公开占位符，token、ticket 和 server 地址不得进入仓库。
+日志和测试夹具使用公开占位符，token、ticket 和 server 地址不得进入仓库。
 
 ## 8. 验收标准
 
@@ -150,4 +151,10 @@ git status --short
 4. 幂等、局部重试、回滚和运维 API。
 5. 指标、管理视图和质量门禁。
 6. 跨来源与端到端回归。
+
+## 10. 现状基线（实现触点）
+
+- 增量入口：`src/OpenDeepWiki/Services/Repositories/IncrementalUpdateService.cs` 与 `IncrementalUpdateWorker.cs`；基线字段 `RepositoryBranch.LastCommitId`（40 字符上限，兼容 P4 数字 CL）。
+- P4 事件注入：`Services/Repositories/Perforce/PerforceIncrementalEventService.cs`、`Endpoints/IncrementalUpdateEndpoints.cs`。
+- P4 变更过滤：`Services/Repositories/Perforce/PerforceFilterPipeline.cs`，按 T5.1 收口至 `IRepositoryFileSelectionPolicy`。
 

@@ -46,9 +46,18 @@
     "readOnly": true,
     "preferTrackedFiles": true,
     "maxFileBytes": 2097152
+  },
+  "changeTriggerScope": {
+    "inheritsDocumentScopes": true,
+    "additionalRoots": []
   }
 }
 ```
+
+缺省语义必须显式定义，不允许实现各自兜底：
+
+- 未配置 `changeTriggerScope` 时默认继承全部 `documentScopes`。
+- 未配置 `includedSuffixes` 的 Document scope（如示例中 `game-plugins`）使用全局默认后缀集合（与 `game-source` 示例一致）；如需接受全部文本文件必须显式声明，不允许隐式全收。
 
 ### T1.2 统一文件选择策略
 
@@ -81,12 +90,15 @@ bool ShouldPruneDirectory(string path, FileSelectionOperation operation);
 - 生成期间复验实际读取文件；发现 workspace 漂移时失败关闭，不推进基线。
 - 不自动 revert、清理或修改来源不明的本地文件。
 
-`#have` 不是天然的单一全仓 revision。发布身份至少由以下信息组成：
+`#have` 不是天然的单一全仓 revision。快照身份至少由以下信息组成：
 
 ```text
-Repository + Branch + ScopeConfigurationVersion
-+ TargetChangelist + TrackedManifestHash + GenerationEngineVersion
+SnapshotIdentity =
+  Repository + Branch + ScopeConfigurationVersion
+  + TargetChangelist + TrackedManifestHash + GenerationEngineVersion
 ```
+
+发布以 `BranchLanguage` 为单位：发布身份 = `SnapshotIdentity + Language`。该定义同时是 WP5 增量任务的幂等边界，两处必须引用同一定义，不得各自维护变体。
 
 ### T1.4 Staging 与原子发布
 
@@ -96,6 +108,8 @@ Repository + Branch + ScopeConfigurationVersion
 - 失败、取消或超时保留上一完整版本，不能展示半棵目录或新旧混合正文。
 - Scope 语义变化标记 `ReindexRequired`；旧版本可以继续读，但不能冒充新配置下的 current。
 - 配置更新和生成任务共用仓库级协调锁；执行中版本变化时不发布结果。
+- 翻译、思维导图、Graphify 等衍生产物必须记录其来源 generation：原子切换只保证主体 Catalog/DocFile 一致，衍生产物允许异步补齐，但读取端必须能识别“衍生产物落后于当前 generation”并明示或降级，不得把旧衍生产物当作新正文的产物展示。
+- 首期允许简化实现：不做完整双缓冲，采用“staging 标记 + 校验通过后事务性翻转”的方式；但对读者可见的原子性、失败保留和回滚语义不得降低。
 
 ## 2. 兼容要求
 
@@ -121,4 +135,11 @@ Repository + Branch + ScopeConfigurationVersion
 3. 统一文件选择策略及跨来源回归。
 4. P4 manifest、内容策略和 Workspace Lease。
 5. staging generation、发布指针和失败恢复。
+
+## 5. 现状基线（实现触点）
+
+- 目录与正文存储：`src/OpenDeepWiki/Services/Wiki/CatalogStorage.cs`——单一 current 树、软删除加 path 复用，无 generation 维度；T1.4 直接影响其唯一约束和全部读路径。
+- 增量基线字段：`RepositoryBranch.LastCommitId`，消费方为 `src/OpenDeepWiki/Services/Repositories/IncrementalUpdateService.cs`。
+- P4 文件过滤：`src/OpenDeepWiki/Services/Repositories/Perforce/PerforceFilterPipeline.cs`，将由 `IRepositoryFileSelectionPolicy` 统一收口。
+- 对 `DocCatalog`、`DocFile`、`BranchLanguage` 的改动遵循总入口第 10 节“新表优先”的 fork 约束。
 
