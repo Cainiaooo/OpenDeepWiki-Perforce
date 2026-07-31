@@ -4,6 +4,9 @@
 `Perforce增量改造方案.md`——采用「外部注入变更文件列表」路线：OpenDeepWiki 内部不做
 p4 交互，由外部脚本采集 Perforce 变更并通过 API 注入。
 
+fork 的上游同步、长期特性分支维护和提交验证流程见
+[`docs/FORK_DEVELOPMENT_WORKFLOW.md`](../../docs/FORK_DEVELOPMENT_WORKFLOW.md)。
+
 ## 一、注册 Perforce 源
 
 Perforce 工作区以本地目录形式挂载（建议配 `LocalDirectoryImportMode=Link` 避免整树复制，
