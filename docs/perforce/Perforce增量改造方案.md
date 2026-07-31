@@ -1,7 +1,7 @@
 # OpenDeepWiki Perforce 增量更新改造方案
 
 **日期**:2026-07-22
-**背景**:NeonGame(UE + AngelScript/C++,Perforce 管理)选用 OpenDeepWiki 作为模块级上下文文档平台(选型分析见 `D:/DevTools/代码库上下文工具选型对比(源码级调研).md`)。本文档描述让增量更新在 Perforce 工作区生效所需的改造。
+**背景**:大型 UE + AngelScript/C++ 项目使用 Perforce 管理源码,需要让 OpenDeepWiki 支持模块级上下文文档和可靠增量更新。本文档描述让增量更新在 Perforce 工作区生效所需的改造。
 **方案定位**:采用**"外部注入变更文件列表"**路线——不在 OpenDeepWiki 内部实现 p4 交互,由外部脚本采集 Perforce 变更并通过 API 注入。侵入面最小,便于跟随上游 rebase。
 **分期**:一期(§2-§4,已落地)为"外部注入完整变更列表";**二期(§7)为目标形态**——外界只发轻量事件,由 OpenDeepWiki 按 changelist 区间自行拉取变更并经 CL 过滤引擎筛选。二期完整复用一期的处理管线(任务实体、`ProcessIncrementalUpdateAsync` 外部列表优先、幂等/回退兜底),仅把"变更列表的生产者"从外部脚本收敛进服务端。
 
@@ -132,7 +132,7 @@ else
 
 ```
 POST /api/v1/repositories/{repositoryId}/branches/{branchId}/incremental-update/external
-Body: { "targetRevision": "1234567", "changedFiles": ["Source/NeonGame/Foo.cpp", "Script/Abilities/Bar.as"], "deletedFiles": [...] }
+Body: { "targetRevision": "1234567", "changedFiles": ["SampleProject/Source/Foo.cpp", "SampleProject/Script/Bar.as"], "deletedFiles": [...] }
 ```
 
 - 创建 `Pending` 状态的 `IncrementalUpdateTask` 并填入 ①的两个字段;
@@ -186,12 +186,12 @@ Body: { "targetRevision": "1234567", "changedFiles": ["Source/NeonGame/Foo.cpp",
 $last = Get-Content .last-processed-cl
 
 # 2. 同步工作区并取当前 changelist
-p4 sync //depot/NeonGame/...
-$current = (p4 changes -m1 //depot/NeonGame/...#have) -replace 'Change (\d+).*','$1'
+p4 sync //depot/SampleProject/...
+$current = (p4 changes -m1 //depot/SampleProject/...#have) -replace 'Change (\d+).*','$1'
 
 if ($current -ne $last) {
     # 3. 取两个 changelist 之间的变更文件(区分修改与删除)
-    $changed = p4 files "//depot/NeonGame/...@$([int]$last+1),@$current"
+    $changed = p4 files "//depot/SampleProject/...@$([int]$last+1),@$current"
     #    → 解析出相对路径列表;action 为 delete/move/delete 的进 deletedFiles
 
     # 4. 注入 OpenDeepWiki
@@ -213,7 +213,7 @@ if ($current -ne $last) {
 
 ## 4. 配套:导出 MD 进 git 的流水线
 
-目标:文档产物通过 git 管理(可落 NeonGame 的 `DevDocs/` 体系),Human 走 wiki 界面,Agent 读 MD。
+目标:文档产物通过 git 管理(可落示例项目的 `DevDocs/` 体系),Human 走 wiki 界面,Agent 读 MD。
 
 现有导出能力:`WikiGenerator.ExportAsync`(`src/OpenDeepWiki/Services/Wiki/WikiGenerator.cs:615-711`),`GET /{owner}/{repo}/export`,把 `DocCatalog` 树 + `DocFile.Content` 打包为含 .md 文件树的 ZIP(另附自动生成的 `SKILL.md`)。两个自动化障碍:
 
@@ -227,14 +227,14 @@ if ($current -ne $last) {
 ## 5. 备选与不采纳的路线
 
 - **原生 p4 集成**(在 `RepositoryAnalyzer` 内实现 `PreparePerforceWorkspaceAsync`,内部调 `p4 sync`/`p4 files` 做 diff):功能上更自洽,但需引入 p4 CLI/P4API 依赖、处理登录态与 client 配置,改动量升至中-大,且与上游合并冲突面显著变大。**已具体化为 §7 的二期目标形态(事件驱动区间拉取 + CL 过滤引擎)**,①-⑤ 的设计(独立 SourceType、`GetChangedFilesAsync` 单点收口)已为其预留扩展位;
-- **不改代码、纯定时全量重建**:可行的保底方案(`RegenerateRepositoryAsync` 会先清空旧文档再重建),但 NeonGame 规模下 token 成本与生成时长不可持续,仅建议作为增量长期漂移后的定期校准手段(如每月一次全量);
+- **不改代码、纯定时全量重建**:可行的保底方案(`RegenerateRepositoryAsync` 会先清空旧文档再重建),但大型项目的 token 成本与生成时长不可持续,仅建议作为增量长期漂移后的定期校准手段(如每月一次全量);
 - **改用文件系统哈希自检增量**(仿 codegraph 的 size/mtime + 内容哈希):需要在 OpenDeepWiki 内新建整套指纹存储与对比逻辑,改动量大于外部注入且收益无差异,不采纳。
 
 ---
 
 ## 6. 实施顺序
 
-1. **先验证、后改造**:不改任何代码,圈定 2-3 个核心模块目录(如 `Source/NeonGame/` 下若干子系统 + `Script/Abilities/`)以本地目录导入,全量生成,评估文档质量是否达到"Agent CR 兜底上下文"标准;
+1. **先验证、后改造**:不改任何代码,圈定 2-3 个核心模块目录(如 `SampleProject/Source/` 下若干子系统 + `SampleProject/Script/`)以本地目录导入,全量生成,评估文档质量是否达到"Agent CR 兜底上下文"标准;
 2. 质量过关 → 实施 §2 改造(建议独立分支维护,定期 rebase 上游);
 3. 部署 §3 p4 采集脚本(先定时轮询,稳定后再考虑 p4 trigger);
 4. 打通 §4 导出流水线,MD 落 git;
@@ -280,7 +280,7 @@ if ($current -ne $last) {
 | 维度 | 说明 | UE 示例 |
 |---|---|---|
 | 扩展名白/黑名单 | 按后缀,大小写不敏感 | 白名单 `.cpp .h .hpp .cs .as .ini .json .uproject .Build.cs .Target.cs`;或黑名单 `.uasset .umap .png .fbx .wav …` |
-| 路径 glob/正则 | 按 depot 路径或 workspace 相对路径 | 只留 `//depot/NeonGame/Source/…`、`Config/…`;排除 `Content/`、`Intermediate/`、`Saved/`、`DerivedDataCache/` |
+| 路径 glob/正则 | 按 depot 路径或 workspace 相对路径 | 只留 `//depot/SampleProject/Source/…`、`Config/…`;排除 `Content/`、`Intermediate/`、`Saved/`、`DerivedDataCache/` |
 | 变更动作(action) | add/edit/delete/branch/integrate/move | 可选忽略纯 `integrate` 噪音;`delete` 纳入以驱动文档清理(对齐一期的删除并入) |
 | CL 元数据 | CL 描述正则(如 `[skip-wiki]`/`#nodoc`)、作者/机器人账户 | 跳过自动化提交、跳过显式标注不需文档的 CL |
 | filetype 兜底 | 按 p4 `filetype`(`text`/`binary`) | p4 已知为 binary 的一律排除,免维护后缀表,最健壮的兜底 |
@@ -381,3 +381,11 @@ POST perforce-event
 - `InvalidOperationException` 一律 409;
 - 无语言配置却 Completed 并推进基线;
 - 区间 add→delete / delete→add 聚合错误、多行 desc 丢弃、`MaxFiles` 双重计数、Glob 重复编译等。
+
+---
+
+## 8. 三期：完整工作区上下文与文档生成边界
+
+下一阶段将完整工作区的 Agent 只读上下文与 Wiki 主体生成范围分离，并让全量、增量、全量回退
+统一使用仓库级文件选择策略。任务拆分、验收标准和隐私要求见
+[`PERFORCE_WORKSPACE_SCOPE_PHASE3_TASKS.md`](PERFORCE_WORKSPACE_SCOPE_PHASE3_TASKS.md)。

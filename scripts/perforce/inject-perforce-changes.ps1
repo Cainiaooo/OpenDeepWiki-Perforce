@@ -22,7 +22,7 @@ param(
     [Parameter(Mandatory = $true)][string]$RepositoryId,
     [Parameter(Mandatory = $true)][string]$BranchId,
     # 关注的 depot 路径（只投喂源码目录，排除二进制/生成目录）
-    [string]$DepotPath = "//depot/NeonGame/...",
+    [string]$DepotPath = "//depot/SampleProject/...",
     # 本地状态文件：记录上次处理到的 changelist
     [string]$StateFile = ".last-processed-cl",
     # 单次注入的变更文件数阈值：超过则建议改为全量重建而非增量
