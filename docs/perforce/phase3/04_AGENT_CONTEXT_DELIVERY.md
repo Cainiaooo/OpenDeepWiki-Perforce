@@ -1,6 +1,21 @@
 # WP4：面向 AI CR、UE 编辑器 Agent 与人员的上下文交付
 
+**状态**：已落地（Context Envelope、Snapshot Resolver、CR/Editor/Module 组装、MCP + HTTP 入口；Scope 级细粒度授权与匿名化反馈观测可后置）
+
 **目标**：从“搜索若干 Wiki 页面”升级为“按任务、角色和版本组装可验证上下文”。
+
+## 0. 实现触点
+
+| 组件 | 路径 |
+|---|---|
+| ContextEnvelope / reason codes | `src/OpenDeepWiki/Services/Context/ContextModels.cs` |
+| Wiki Snapshot Resolver | `src/OpenDeepWiki/Services/Context/WikiSnapshotResolver.cs` |
+| Context Assembly（CR / Editor / Module） | `src/OpenDeepWiki/Services/Context/ContextAssemblyService.cs` |
+| MCP 工具 | `src/OpenDeepWiki/MCP/McpContextTools.cs`（`GetChangeReviewContext` / `GetEditorTaskContext` / `GetModuleOverview`） |
+| HTTP 入口（Web/Chat 复用） | `src/OpenDeepWiki/Endpoints/ContextEndpoints.cs` → `/api/v1/repositories/{id}/context/*` |
+| 测试 | `tests/OpenDeepWiki.Tests/Services/Context/` |
+
+兼容策略：`Exact` → 有限距离 `CompatibleFallback` → 可选 `Stale` → `Rejected`（写操作要求 Exact；Rejected 时 `items` 为空）。
 
 ## 1. 统一 Context Envelope
 

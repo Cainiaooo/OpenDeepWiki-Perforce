@@ -21,6 +21,7 @@ using OpenDeepWiki.Services.OAuth;
 using OpenDeepWiki.Services.Organizations;
 using OpenDeepWiki.Services.Prompts;
 using OpenDeepWiki.Services.Recommendation;
+using OpenDeepWiki.Services.Context;
 using OpenDeepWiki.Services.Generation;
 using OpenDeepWiki.Services.Repositories;
 using OpenDeepWiki.Services.Repositories.Perforce;
@@ -223,6 +224,10 @@ try
     builder.Services.AddSingleton<IUeKnowledgeMcpContractChecker, UeKnowledgeMcpContractChecker>();
     builder.Services.AddScoped<IUeKnowledgePackageService, UeKnowledgePackageService>();
 
+    // Perforce phase-three WP4: task-oriented context assembly for AI CR / editor / onboarding
+    builder.Services.AddScoped<IWikiSnapshotResolver, WikiSnapshotResolver>();
+    builder.Services.AddScoped<IContextAssemblyService, ContextAssemblyService>();
+
     // Configure Graphify artifact generation
     builder.Services.AddOptions<GraphifyOptions>()
         .Bind(builder.Configuration.GetSection("Graphify"));
@@ -349,6 +354,7 @@ try
     // 注册 MCP 提供商管理服务
     builder.Services.AddScoped<IAdminMcpProviderService, AdminMcpProviderService>();
     builder.Services.AddScoped<IMcpUsageLogService, McpUsageLogService>();
+    builder.Services.AddScoped<IMcpUserResolver, McpUserResolver>();
     builder.Services.AddHostedService<McpStatisticsAggregationService>();
 
     // MCP server registration (official MCP server + scope via ConfigureSessionOptions)
@@ -394,7 +400,8 @@ try
                 };
             })
             .WithTools<McpGlobalTools>()
-            .WithTools<McpRepositoryTools>();
+            .WithTools<McpRepositoryTools>()
+            .WithTools<McpContextTools>();
     }
 
     var app = builder.Build();
@@ -455,6 +462,7 @@ try
     app.MapBranchGenerationEndpoints();
     app.MapScopeConfigurationEndpoints();
     app.MapUeKnowledgeEndpoints();
+    app.MapContextEndpoints();
     app.MapMcpProviderEndpoints();
 
     // 初始化数据库（创建默认数据）
