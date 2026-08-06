@@ -65,6 +65,7 @@ public class TestDbContext : DbContext, IContext
     public DbSet<WikiGeneration> WikiGenerations { get; set; } = null!;
     public DbSet<BranchLanguagePublication> BranchLanguagePublications { get; set; } = null!;
     public DbSet<SourceWorkspaceLease> SourceWorkspaceLeases { get; set; } = null!;
+    public DbSet<UeKnowledgePackage> UeKnowledgePackages { get; set; } = null!;
     
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

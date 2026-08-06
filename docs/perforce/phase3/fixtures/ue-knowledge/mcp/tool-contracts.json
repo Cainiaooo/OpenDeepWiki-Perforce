@@ -1,0 +1,22 @@
+{
+  "tools": [
+    {
+      "toolName": "ue.spawn_actor",
+      "description": "Spawn an actor of a known class in the current editor world",
+      "inputSchemaJson": "{\"type\":\"object\",\"properties\":{\"className\":{\"type\":\"string\"}},\"required\":[\"className\"]}",
+      "preconditions": ["EditorWorldLoaded"],
+      "sideEffects": ["MutatesEditorWorld"],
+      "minBuildChangelist": "1000",
+      "maxBuildChangelist": null
+    },
+    {
+      "toolName": "ue.get_selected_actors",
+      "description": "Return currently selected actors",
+      "inputSchemaJson": "{\"type\":\"object\",\"properties\":{}}",
+      "preconditions": ["EditorWorldLoaded"],
+      "sideEffects": [],
+      "minBuildChangelist": "1000",
+      "maxBuildChangelist": null
+    }
+  ]
+}

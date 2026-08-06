@@ -57,6 +57,7 @@ public interface IContext : IDisposable
     DbSet<WikiGeneration> WikiGenerations { get; set; }
     DbSet<BranchLanguagePublication> BranchLanguagePublications { get; set; }
     DbSet<SourceWorkspaceLease> SourceWorkspaceLeases { get; set; }
+    DbSet<UeKnowledgePackage> UeKnowledgePackages { get; set; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
@@ -119,6 +120,7 @@ public abstract class MasterDbContext : DbContext, IContext
     public DbSet<WikiGeneration> WikiGenerations { get; set; } = null!;
     public DbSet<BranchLanguagePublication> BranchLanguagePublications { get; set; } = null!;
     public DbSet<SourceWorkspaceLease> SourceWorkspaceLeases { get; set; } = null!;
+    public DbSet<UeKnowledgePackage> UeKnowledgePackages { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -556,6 +558,25 @@ public abstract class MasterDbContext : DbContext, IContext
             entity.Property(e => e.Purpose).HasMaxLength(100);
             entity.Property(e => e.OwnerId).HasMaxLength(36);
             entity.Property(e => e.OwnerDescription).HasMaxLength(200);
+        });
+
+        // P4 Phase3 WP3: UE Knowledge Package
+        modelBuilder.Entity<UeKnowledgePackage>(entity =>
+        {
+            entity.HasIndex(e => new { e.RepositoryId, e.BranchId, e.PackageDigest }).IsUnique();
+            entity.HasIndex(e => new { e.RepositoryId, e.BranchId, e.IsCurrent });
+            entity.HasIndex(e => new { e.BranchId, e.BuildChangelist });
+            entity.Property(e => e.SchemaVersion).HasMaxLength(20);
+            entity.Property(e => e.ExporterVersion).HasMaxLength(64);
+            entity.Property(e => e.ProjectIdentity).HasMaxLength(120);
+            entity.Property(e => e.BranchName).HasMaxLength(120);
+            entity.Property(e => e.BuildChangelist).HasMaxLength(40);
+            entity.Property(e => e.EngineVersion).HasMaxLength(80);
+            entity.Property(e => e.TargetPlatform).HasMaxLength(80);
+            entity.Property(e => e.ExportSource).HasMaxLength(40);
+            entity.Property(e => e.PackageDigest).HasMaxLength(64);
+            entity.Property(e => e.SemanticDigest).HasMaxLength(64);
+            entity.Property(e => e.PackageRootPath).HasMaxLength(500);
         });
     }
 }

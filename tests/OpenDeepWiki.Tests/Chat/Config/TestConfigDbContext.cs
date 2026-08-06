@@ -65,6 +65,7 @@ public class TestConfigDbContext : DbContext, IContext
     public DbSet<WikiGeneration> WikiGenerations { get; set; } = null!;
     public DbSet<BranchLanguagePublication> BranchLanguagePublications { get; set; } = null!;
     public DbSet<SourceWorkspaceLease> SourceWorkspaceLeases { get; set; } = null!;
+    public DbSet<UeKnowledgePackage> UeKnowledgePackages { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

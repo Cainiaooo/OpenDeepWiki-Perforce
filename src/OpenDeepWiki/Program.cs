@@ -27,6 +27,7 @@ using OpenDeepWiki.Services.Repositories.Perforce;
 using OpenDeepWiki.Services.Repositories.Scope;
 using OpenDeepWiki.Services.Translation;
 using OpenDeepWiki.Services.Mcp;
+using OpenDeepWiki.Services.UeKnowledge;
 using OpenDeepWiki.Services.UserProfile;
 using OpenDeepWiki.Services.Wiki;
 using Scalar.AspNetCore;
@@ -213,6 +214,14 @@ try
         var engines = sp.GetServices<IGenerationEngine>();
         return new GenerationEngineRegistry(engines, GenerationEngineIds.Legacy);
     });
+
+    // Perforce phase-three WP3: UE Knowledge Package schema, validation, fact index
+    builder.Services.AddSingleton<IUeKnowledgePackageLoader, UeKnowledgePackageLoader>();
+    builder.Services.AddSingleton<IUeKnowledgeFactIndexBuilder, UeKnowledgeFactIndexBuilder>();
+    builder.Services.AddSingleton<IUeKnowledgePackageValidator, UeKnowledgePackageValidator>();
+    builder.Services.AddSingleton<IUeKnowledgeSemanticDiff, UeKnowledgeSemanticDiff>();
+    builder.Services.AddSingleton<IUeKnowledgeMcpContractChecker, UeKnowledgeMcpContractChecker>();
+    builder.Services.AddScoped<IUeKnowledgePackageService, UeKnowledgePackageService>();
 
     // Configure Graphify artifact generation
     builder.Services.AddOptions<GraphifyOptions>()
@@ -445,6 +454,7 @@ try
     app.MapIncrementalUpdateEndpoints();
     app.MapBranchGenerationEndpoints();
     app.MapScopeConfigurationEndpoints();
+    app.MapUeKnowledgeEndpoints();
     app.MapMcpProviderEndpoints();
 
     // 初始化数据库（创建默认数据）

@@ -9,6 +9,7 @@
 - [`phase3/01_SCOPE_AND_SNAPSHOT.md`](phase3/01_SCOPE_AND_SNAPSHOT.md)：Scope、P4 文件身份、Workspace Lease 和原子发布。
 - [`phase3/02_HIERARCHICAL_GENERATION.md`](phase3/02_HIERARCHICAL_GENERATION.md)：超大工程分层规划、Scope Manifest、生成隔离和覆盖审计。
 - [`phase3/03_UE_KNOWLEDGE_EXPORT.md`](phase3/03_UE_KNOWLEDGE_EXPORT.md)：UE 反射、资产 Schema、GameplayTag 和 MCP 契约的结构化事实导出。
+- [`phase3/fixtures/ue-knowledge/`](phase3/fixtures/ue-knowledge/)：UE Knowledge Package schema 1.0 公开示例夹具。
 - [`phase3/04_AGENT_CONTEXT_DELIVERY.md`](phase3/04_AGENT_CONTEXT_DELIVERY.md)：AI CR、UE 编辑器 Agent、新人导览和 Build CL 版本握手。
 - [`phase3/05_INCREMENTAL_OPERATIONS_AND_QUALITY.md`](phase3/05_INCREMENTAL_OPERATIONS_AND_QUALITY.md)：增量影响、运维、可观测性和发布质量门禁。
 - [`phase3/IMPLEMENTATION_REFERENCES.md`](phase3/IMPLEMENTATION_REFERENCES.md)：CodeWiki、OpenWiki、RepoAgent 等项目的可借鉴模块与引入边界。

@@ -1,0 +1,7 @@
+{
+  "tags": [
+    { "tag": "Sample.Combat.Melee", "source": "DefaultGameplayTags.ini", "comment": "Melee attack channel" },
+    { "tag": "Sample.Combat.Ranged", "source": "DefaultGameplayTags.ini", "comment": "Ranged attack channel" },
+    { "tag": "Sample.UI.Inventory", "source": "DefaultGameplayTags.ini" }
+  ]
+}

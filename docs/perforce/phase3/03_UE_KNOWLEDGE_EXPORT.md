@@ -1,5 +1,7 @@
 # WP3：UE 结构化事实与资产知识导出
 
+**状态**：进行中（OpenDeepWiki 侧 schema / 验证 / 事实索引 / 摄取 API 已落地；导出器仍归属目标项目）
+
 **目标**：弥补源码扫描对 Blueprint、资产配置和编辑器能力的天然盲区，为 Wiki 与 UE Agent 提供可验证事实。
 
 ## 1. 基本边界
@@ -112,4 +114,52 @@ ue-knowledge/
 3. OpenDeepWiki provider、验证和事实索引。
 4. 语义 diff 和页面依赖映射。
 5. UE MCP tool contract 导出与兼容检查。
+
+## 8. OpenDeepWiki 已落地能力（本 fork）
+
+### 8.1 包格式与夹具
+
+- Schema 版本：`1.0`（`UeKnowledgeSchema.CurrentSchemaVersion`）。
+- 公开示例：[`fixtures/ue-knowledge/`](fixtures/ue-knowledge/)。
+- 必需分片 kind：`reflection`、`gameplay-tags`；可选：`primary-assets`、`data-schemas`、`workflows`、`mcp-contracts`。
+
+### 8.2 摄取与查询 API
+
+```
+POST /api/v1/repositories/{repositoryId}/ue-knowledge/ingest
+GET  /api/v1/repositories/{repositoryId}/ue-knowledge?branchId=
+GET  /api/v1/repositories/{repositoryId}/ue-knowledge/current?branchId=
+GET  /api/v1/repositories/{repositoryId}/ue-knowledge/current/facts?branchId=
+GET  /api/v1/repositories/{repositoryId}/ue-knowledge/packages/{packageId}/facts
+POST /api/v1/repositories/{repositoryId}/ue-knowledge/diff
+POST /api/v1/repositories/{repositoryId}/ue-knowledge/mcp-compatibility
+```
+
+`ingest` 请求体示例：
+
+```json
+{
+  "branchId": "<branch-id>",
+  "packageRootPath": "D:/build/output/ue-knowledge",
+  "expectedProjectId": "SampleProject",
+  "expectedBuildChangelist": "1234567",
+  "strictBuildChangelistMatch": true,
+  "setAsCurrent": true
+}
+```
+
+鉴权与外部增量注入一致：仓库 owner 或管理员 JWT。
+
+### 8.3 验证规则摘要
+
+- 拒绝：损坏 JSON、digest 不符、schema 不支持、exporter 不兼容、project identity 不匹配、缺必需 shard、路径逃逸。
+- Partial/Truncated 可入库，但 `Status=Partial`，不得伪装为完整。
+- 同一 `(repository, branch, packageDigest)` 幂等；`setAsCurrent` 会 supersede 旧 current。
+- Build CL 漂移可通过 `MarkStaleIfIncompatibleAsync` 标记 stale，保留查询但不视为最新。
+
+### 8.4 与生成管线的衔接
+
+- `GenerationRequest.UeKnowledgeFacts` 可挂载已验证事实索引。
+- 证据类型 `EvidenceKind.UeExportedFact` 已在 WP2 定义；叶子生成消费事实索引的页面级接线属于后续细化。
+- 导出器代码不进入本仓库；目标项目侧 Commandlet/插件只需产出符合 schema 的目录包。
 

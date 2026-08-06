@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using OpenDeepWiki.Services.Repositories.Scope;
+using OpenDeepWiki.Services.UeKnowledge;
 
 namespace OpenDeepWiki.Services.Generation;
 
@@ -67,6 +68,11 @@ public sealed class GenerationRequest
     /// 可选：WorkspaceManifest 条目，用于填充 have revision 等元数据。
     /// </summary>
     public IReadOnlyDictionary<string, WorkspaceManifestEntry>? ManifestByPath { get; init; }
+
+    /// <summary>
+    /// 可选：已验证的 UE Knowledge 事实索引（WP3）。不替代 DocumentScope。
+    /// </summary>
+    public UeKnowledgeFactIndex? UeKnowledgeFacts { get; init; }
 
     public string? EngineId { get; init; }
 }

@@ -653,6 +653,48 @@ public static class DbInitializer
             "CREATE UNIQUE INDEX IF NOT EXISTS IX_DocCatalogs_BranchLanguageId_Path_GenerationId ON DocCatalogs (BranchLanguageId, Path, GenerationId)");
         await ctx.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_DocFiles_BranchLanguageId_GenerationId ON DocFiles (BranchLanguageId, GenerationId)");
+
+        // P4 Phase3 WP3: UE Knowledge Package
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS UeKnowledgePackages (
+                Id TEXT NOT NULL PRIMARY KEY,
+                RepositoryId TEXT NOT NULL,
+                BranchId TEXT NOT NULL,
+                IsCurrent INTEGER NOT NULL,
+                IsStale INTEGER NOT NULL,
+                Status INTEGER NOT NULL,
+                Completeness INTEGER NOT NULL,
+                SchemaVersion TEXT NOT NULL,
+                ExporterVersion TEXT NOT NULL,
+                ProjectIdentity TEXT NOT NULL,
+                BranchName TEXT,
+                BuildChangelist TEXT NOT NULL,
+                EngineVersion TEXT,
+                TargetPlatform TEXT,
+                ExportSource TEXT,
+                PackageDigest TEXT NOT NULL,
+                SemanticDigest TEXT NOT NULL,
+                ManifestJson TEXT NOT NULL,
+                FactIndexJson TEXT,
+                PackageRootPath TEXT,
+                ValidationWarningsJson TEXT,
+                ErrorMessage TEXT,
+                ExportedAtUtc TEXT,
+                IngestedAtUtc TEXT,
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT,
+                DeletedAt TEXT,
+                IsDeleted INTEGER NOT NULL DEFAULT 0,
+                Version BLOB,
+                FOREIGN KEY (RepositoryId) REFERENCES Repositories(Id) ON DELETE CASCADE,
+                FOREIGN KEY (BranchId) REFERENCES RepositoryBranches(Id) ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_UeKnowledgePackages_RepositoryId_BranchId_PackageDigest ON UeKnowledgePackages (RepositoryId, BranchId, PackageDigest)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_UeKnowledgePackages_RepositoryId_BranchId_IsCurrent ON UeKnowledgePackages (RepositoryId, BranchId, IsCurrent)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_UeKnowledgePackages_BranchId_BuildChangelist ON UeKnowledgePackages (BranchId, BuildChangelist)");
     }
 
     private static async Task AddSqliteColumnIfMissingAsync(
@@ -1038,5 +1080,47 @@ public static class DbInitializer
             CREATE UNIQUE INDEX IF NOT EXISTS ""IX_DocCatalogs_BranchLanguageId_Path_GenerationId"" ON ""DocCatalogs"" (""BranchLanguageId"", ""Path"", ""GenerationId"")");
         await ctx.Database.ExecuteSqlRawAsync(@"
             CREATE INDEX IF NOT EXISTS ""IX_DocFiles_BranchLanguageId_GenerationId"" ON ""DocFiles"" (""BranchLanguageId"", ""GenerationId"")");
+
+        // P4 Phase3 WP3: UE Knowledge Package
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""UeKnowledgePackages"" (
+                ""Id"" TEXT NOT NULL PRIMARY KEY,
+                ""RepositoryId"" TEXT NOT NULL,
+                ""BranchId"" TEXT NOT NULL,
+                ""IsCurrent"" BOOLEAN NOT NULL,
+                ""IsStale"" BOOLEAN NOT NULL,
+                ""Status"" INTEGER NOT NULL,
+                ""Completeness"" INTEGER NOT NULL,
+                ""SchemaVersion"" TEXT NOT NULL,
+                ""ExporterVersion"" TEXT NOT NULL,
+                ""ProjectIdentity"" TEXT NOT NULL,
+                ""BranchName"" TEXT,
+                ""BuildChangelist"" TEXT NOT NULL,
+                ""EngineVersion"" TEXT,
+                ""TargetPlatform"" TEXT,
+                ""ExportSource"" TEXT,
+                ""PackageDigest"" TEXT NOT NULL,
+                ""SemanticDigest"" TEXT NOT NULL,
+                ""ManifestJson"" TEXT NOT NULL,
+                ""FactIndexJson"" TEXT,
+                ""PackageRootPath"" TEXT,
+                ""ValidationWarningsJson"" TEXT,
+                ""ErrorMessage"" TEXT,
+                ""ExportedAtUtc"" TIMESTAMP WITH TIME ZONE,
+                ""IngestedAtUtc"" TIMESTAMP WITH TIME ZONE,
+                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""UpdatedAt"" TIMESTAMP WITH TIME ZONE,
+                ""DeletedAt"" TIMESTAMP WITH TIME ZONE,
+                ""IsDeleted"" BOOLEAN NOT NULL DEFAULT FALSE,
+                ""Version"" BYTEA,
+                FOREIGN KEY (""RepositoryId"") REFERENCES ""Repositories""(""Id"") ON DELETE CASCADE,
+                FOREIGN KEY (""BranchId"") REFERENCES ""RepositoryBranches""(""Id"") ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_UeKnowledgePackages_RepositoryId_BranchId_PackageDigest"" ON ""UeKnowledgePackages"" (""RepositoryId"", ""BranchId"", ""PackageDigest"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_UeKnowledgePackages_RepositoryId_BranchId_IsCurrent"" ON ""UeKnowledgePackages"" (""RepositoryId"", ""BranchId"", ""IsCurrent"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_UeKnowledgePackages_BranchId_BuildChangelist"" ON ""UeKnowledgePackages"" (""BranchId"", ""BuildChangelist"")");
     }
 }

@@ -1,6 +1,6 @@
 # OpenDeepWiki Perforce 三期：UE 项目知识库目标与实施路线图
 
-**状态**：待实施  
+**状态**：进行中（WP1 Scope/快照、WP2 分层生成、WP3 知识包摄取已落地；WP4/WP5 待实施）  
 **适用范围**：由 Perforce 管理的超大型 Unreal Engine 项目  
 **前置条件**：一期外部变更注入和二期 changelist 区间拉取/过滤管线已经可用
 

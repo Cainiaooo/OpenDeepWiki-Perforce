@@ -1,0 +1,28 @@
+{
+  "classes": [
+    {
+      "stableId": "SampleProject.SampleGameplay.ASampleCharacter",
+      "name": "ASampleCharacter",
+      "superClass": "ACharacter",
+      "source": "Native",
+      "moduleName": "SampleGameplay",
+      "path": "SampleProject/Source/SampleGameplay/Public/SampleCharacter.h",
+      "properties": [
+        { "name": "MaxHealth", "type": "float", "category": "Combat", "specifiers": ["EditAnywhere", "BlueprintReadOnly"] }
+      ],
+      "functions": [
+        { "name": "ApplyDamage", "returnType": "void", "category": "Combat", "specifiers": ["BlueprintCallable"], "parameters": ["float Damage"] }
+      ]
+    },
+    {
+      "stableId": "SampleProject.Content.BP_SampleWidget",
+      "name": "BP_SampleWidget",
+      "superClass": "UUserWidget",
+      "source": "Blueprint",
+      "moduleName": "SampleUI",
+      "path": "/Game/UI/BP_SampleWidget",
+      "properties": [],
+      "functions": []
+    }
+  ]
+}

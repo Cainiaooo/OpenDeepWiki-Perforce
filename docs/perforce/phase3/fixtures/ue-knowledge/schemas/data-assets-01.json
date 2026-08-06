@@ -1,0 +1,13 @@
+{
+  "dataAssets": [
+    {
+      "stableId": "Schema:USampleItemData",
+      "typeName": "USampleItemData",
+      "superType": "UPrimaryDataAsset",
+      "fields": [
+        { "name": "DisplayName", "type": "FText", "isArray": false },
+        { "name": "StackSize", "type": "int32", "isArray": false }
+      ]
+    }
+  ]
+}

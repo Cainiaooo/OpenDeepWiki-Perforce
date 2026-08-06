@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "1.0",
+  "exporterVersion": "1.0.0",
+  "project": {
+    "projectId": "SampleProject",
+    "projectName": "Sample Project",
+    "branch": "main"
+  },
+  "buildChangelist": "1234567",
+  "engineVersion": "5.4.0",
+  "targetPlatform": "Win64",
+  "exportSource": "Commandlet",
+  "exportedAtUtc": "2026-08-06T00:00:00Z",
+  "commandLineSummary": "SampleProjectEditor -run=ExportKnowledge",
+  "completeness": "Complete",
+  "errors": [],
+  "truncationNotes": [],
+  "privacyFilterNotes": [
+    "Instance property values excluded by default",
+    "Absolute host paths stripped"
+  ],
+  "shards": [
+    {
+      "name": "reflection/classes",
+      "relativePath": "reflection/classes-01.json",
+      "digest": "53893430c36172c6389cc8b461fbd8de61cc2d7a75f814601c9dada52cea9826",
+      "kind": "reflection",
+      "objectCount": 2
+    },
+    {
+      "name": "assets/primary",
+      "relativePath": "assets/primary-assets-01.json",
+      "digest": "f9f6b113b6897d95c0300b1ebfa5352219689568c66b09856da1d4513f6beb9d",
+      "kind": "primary-assets",
+      "objectCount": 1
+    },
+    {
+      "name": "schemas/data-assets",
+      "relativePath": "schemas/data-assets-01.json",
+      "digest": "a5f1259ead53e40965fde624753ce8f292db0994afcd8665a16632422ef3e6cf",
+      "kind": "data-schemas",
+      "objectCount": 1
+    },
+    {
+      "name": "gameplay/tags",
+      "relativePath": "gameplay/tags.json",
+      "digest": "4ef4a832ddfece2678c37c336fd1daf1a23d04ae830436dc857a6f1408222bc4",
+      "kind": "gameplay-tags",
+      "objectCount": 3
+    },
+    {
+      "name": "workflows/editor-actions",
+      "relativePath": "workflows/editor-actions.json",
+      "digest": "ebe7b92166a410fdd2128d55b0a59482f89558b3d23a28d2c2028d0ec1359e6b",
+      "kind": "workflows",
+      "objectCount": 1
+    },
+    {
+      "name": "mcp/tool-contracts",
+      "relativePath": "mcp/tool-contracts.json",
+      "digest": "08090dfe23a8c6d8f2a870e1b569d431f652586bc9f00280c2432f830da426b1",
+      "kind": "mcp-contracts",
+      "objectCount": 2
+    }
+  ]
+}
