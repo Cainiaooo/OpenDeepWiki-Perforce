@@ -21,6 +21,7 @@ using OpenDeepWiki.Services.OAuth;
 using OpenDeepWiki.Services.Organizations;
 using OpenDeepWiki.Services.Prompts;
 using OpenDeepWiki.Services.Recommendation;
+using OpenDeepWiki.Services.Generation;
 using OpenDeepWiki.Services.Repositories;
 using OpenDeepWiki.Services.Repositories.Perforce;
 using OpenDeepWiki.Services.Repositories.Scope;
@@ -199,6 +200,19 @@ try
     builder.Services.AddScoped<IScopeConfigurationService, ScopeConfigurationService>();
     builder.Services.AddScoped<ISourceWorkspaceLease, SourceWorkspaceLeaseService>();
     builder.Services.AddScoped<IWikiGenerationService, WikiGenerationService>();
+
+    // Perforce phase-three WP2: generation engine boundary, inventory, planning, coverage audit
+    builder.Services.AddSingleton<ISourceInventoryBuilder, SourceInventoryBuilder>();
+    builder.Services.AddSingleton<IDomainTopicPlanner, DomainTopicPlanner>();
+    builder.Services.AddSingleton<ICatalogMerger, CatalogMerger>();
+    builder.Services.AddSingleton<ICoverageAuditor, CoverageAuditor>();
+    builder.Services.AddScoped<IGenerationEngine, LegacyGenerationEngine>();
+    builder.Services.AddScoped<IGenerationEngine, HierarchicalGenerationEngine>();
+    builder.Services.AddScoped<IGenerationEngineRegistry>(sp =>
+    {
+        var engines = sp.GetServices<IGenerationEngine>();
+        return new GenerationEngineRegistry(engines, GenerationEngineIds.Legacy);
+    });
 
     // Configure Graphify artifact generation
     builder.Services.AddOptions<GraphifyOptions>()

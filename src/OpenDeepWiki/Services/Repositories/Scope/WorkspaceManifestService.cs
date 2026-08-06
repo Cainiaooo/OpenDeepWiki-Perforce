@@ -17,6 +17,14 @@ public interface IWorkspaceManifestService
         IEnumerable<WorkspaceManifestEntry> trackedEntries,
         WorkspaceContentPolicy contentPolicy);
 
+    /// <summary>
+    /// 从 BuildManifest 产物 JSON 还原条目，供 Inventory 等消费方复用。
+    /// </summary>
+    bool TryParseManifestJson(
+        string? manifestJson,
+        out IReadOnlyList<WorkspaceManifestEntry> entries,
+        out string? contentPolicy);
+
     WorkspaceManifestVerificationResult VerifyReadFiles(
         WorkspaceManifest manifest,
         IEnumerable<WorkspaceReadObservation> observations);
@@ -166,6 +174,74 @@ public sealed class WorkspaceManifestService : IWorkspaceManifestService
             ManifestJson = json,
             Warnings = warnings
         };
+    }
+
+    public bool TryParseManifestJson(
+        string? manifestJson,
+        out IReadOnlyList<WorkspaceManifestEntry> entries,
+        out string? contentPolicy)
+    {
+        entries = [];
+        contentPolicy = null;
+        if (string.IsNullOrWhiteSpace(manifestJson))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(manifestJson);
+            var root = document.RootElement;
+            if (root.TryGetProperty("contentPolicy", out var policyElement)
+                && policyElement.ValueKind == JsonValueKind.String)
+            {
+                contentPolicy = policyElement.GetString();
+            }
+
+            if (!root.TryGetProperty("files", out var filesElement)
+                || filesElement.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            var parsed = new List<WorkspaceManifestEntry>();
+            foreach (var file in filesElement.EnumerateArray())
+            {
+                var path = file.TryGetProperty("path", out var pathElement)
+                    ? pathElement.GetString()
+                    : null;
+                if (string.IsNullOrWhiteSpace(path))
+                {
+                    continue;
+                }
+
+                parsed.Add(new WorkspaceManifestEntry
+                {
+                    RelativePath = ScopePathUtility.NormalizeRelativePath(path),
+                    DepotPath = file.TryGetProperty("depot", out var depot) ? depot.GetString() : null,
+                    HaveRevision = file.TryGetProperty("have", out var have) ? have.GetString() : null,
+                    FileType = file.TryGetProperty("type", out var type) ? type.GetString() : null,
+                    IsOpened = file.TryGetProperty("opened", out var opened)
+                               && opened.ValueKind is JsonValueKind.True or JsonValueKind.False
+                        ? opened.GetBoolean()
+                        : false,
+                    OpenedAction = file.TryGetProperty("action", out var action) ? action.GetString() : null,
+                    LocalDigest = file.TryGetProperty("digest", out var digest) ? digest.GetString() : null,
+                    MatchesHaveContent = true
+                });
+            }
+
+            entries = parsed
+                .OrderBy(item => item.RelativePath, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return true;
+        }
+        catch
+        {
+            entries = [];
+            contentPolicy = null;
+            return false;
+        }
     }
 
     public WorkspaceManifestVerificationResult VerifyReadFiles(

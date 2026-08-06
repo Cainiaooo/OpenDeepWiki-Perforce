@@ -64,6 +64,12 @@ public class WikiGenerationAndManifestTests
         Assert.Equal("SampleProject/Source/A.cpp", manifest.Entries[0].RelativePath);
         Assert.Contains(manifest.Warnings, warning => warning.Contains("Opened", StringComparison.Ordinal));
         Assert.False(string.IsNullOrWhiteSpace(manifest.ManifestHash));
+
+        Assert.True(service.TryParseManifestJson(manifest.ManifestJson, out var parsed, out var policy));
+        Assert.Equal(nameof(WorkspaceContentPolicy.SubmittedHaveOnly), policy);
+        Assert.Single(parsed);
+        Assert.Equal("SampleProject/Source/A.cpp", parsed[0].RelativePath);
+        Assert.Equal("10", parsed[0].HaveRevision);
     }
 
     [Fact]
