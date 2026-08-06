@@ -518,6 +518,141 @@ public static class DbInitializer
             "CREATE INDEX IF NOT EXISTS IX_RepositoryProcessingLogs_BranchId ON RepositoryProcessingLogs (BranchId)");
         await ctx.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_RepositoryProcessingLogs_GenerationTaskId ON RepositoryProcessingLogs (GenerationTaskId)");
+
+        // P4 Phase3 WP1: Scope / Snapshot
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS RepositoryScopeConfigurations (
+                Id TEXT NOT NULL PRIMARY KEY,
+                RepositoryId TEXT NOT NULL,
+                ConfigurationVersion INTEGER NOT NULL,
+                ConfigurationJson TEXT NOT NULL,
+                ContentHash TEXT NOT NULL,
+                IsCurrent INTEGER NOT NULL,
+                ReindexRequired INTEGER NOT NULL,
+                IsLegacyFallback INTEGER NOT NULL,
+                CreatedByUserId TEXT,
+                ChangeSummary TEXT,
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT,
+                DeletedAt TEXT,
+                IsDeleted INTEGER NOT NULL DEFAULT 0,
+                Version BLOB,
+                FOREIGN KEY (RepositoryId) REFERENCES Repositories(Id) ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_RepositoryScopeConfigurations_RepositoryId_ConfigurationVersion ON RepositoryScopeConfigurations (RepositoryId, ConfigurationVersion)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_RepositoryScopeConfigurations_RepositoryId_IsCurrent ON RepositoryScopeConfigurations (RepositoryId, IsCurrent)");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS RepositoryScopeAuditLogs (
+                Id TEXT NOT NULL PRIMARY KEY,
+                RepositoryId TEXT NOT NULL,
+                PreviousConfigurationVersion INTEGER,
+                ConfigurationVersion INTEGER NOT NULL,
+                PreviousContentHash TEXT,
+                ContentHash TEXT NOT NULL,
+                ActorUserId TEXT,
+                Action TEXT NOT NULL,
+                ImpactPreviewJson TEXT,
+                Notes TEXT,
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT,
+                DeletedAt TEXT,
+                IsDeleted INTEGER NOT NULL DEFAULT 0,
+                Version BLOB,
+                FOREIGN KEY (RepositoryId) REFERENCES Repositories(Id) ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_RepositoryScopeAuditLogs_RepositoryId_CreatedAt ON RepositoryScopeAuditLogs (RepositoryId, CreatedAt)");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS WikiGenerations (
+                Id TEXT NOT NULL PRIMARY KEY,
+                RepositoryId TEXT NOT NULL,
+                BranchId TEXT NOT NULL,
+                BranchLanguageId TEXT NOT NULL,
+                Status INTEGER NOT NULL,
+                ScopeConfigurationVersion INTEGER,
+                ScopeContentHash TEXT,
+                TargetRevision TEXT,
+                TrackedManifestHash TEXT,
+                GenerationEngineVersion TEXT,
+                SnapshotIdentity TEXT,
+                PublicationIdentity TEXT,
+                LanguageCode TEXT,
+                ManifestJson TEXT,
+                ErrorMessage TEXT,
+                StartedAt TEXT,
+                PublishedAt TEXT,
+                FailedAt TEXT,
+                OwnerTaskId TEXT,
+                OwnerTaskType TEXT,
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT,
+                DeletedAt TEXT,
+                IsDeleted INTEGER NOT NULL DEFAULT 0,
+                Version BLOB,
+                FOREIGN KEY (RepositoryId) REFERENCES Repositories(Id) ON DELETE CASCADE,
+                FOREIGN KEY (BranchId) REFERENCES RepositoryBranches(Id) ON DELETE CASCADE,
+                FOREIGN KEY (BranchLanguageId) REFERENCES BranchLanguages(Id) ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_WikiGenerations_BranchLanguageId_Status_CreatedAt ON WikiGenerations (BranchLanguageId, Status, CreatedAt)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_WikiGenerations_RepositoryId_BranchId_Status ON WikiGenerations (RepositoryId, BranchId, Status)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_WikiGenerations_PublicationIdentity ON WikiGenerations (PublicationIdentity)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_WikiGenerations_BranchId ON WikiGenerations (BranchId)");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS BranchLanguagePublications (
+                Id TEXT NOT NULL PRIMARY KEY,
+                BranchLanguageId TEXT NOT NULL,
+                CurrentGenerationId TEXT,
+                DerivativeSourceGenerationId TEXT,
+                PublishedAt TEXT,
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT,
+                DeletedAt TEXT,
+                IsDeleted INTEGER NOT NULL DEFAULT 0,
+                Version BLOB,
+                FOREIGN KEY (BranchLanguageId) REFERENCES BranchLanguages(Id) ON DELETE CASCADE,
+                FOREIGN KEY (CurrentGenerationId) REFERENCES WikiGenerations(Id) ON DELETE SET NULL
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_BranchLanguagePublications_BranchLanguageId ON BranchLanguagePublications (BranchLanguageId)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_BranchLanguagePublications_CurrentGenerationId ON BranchLanguagePublications (CurrentGenerationId)");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS SourceWorkspaceLeases (
+                Id TEXT NOT NULL PRIMARY KEY,
+                RepositoryId TEXT NOT NULL,
+                Purpose TEXT NOT NULL,
+                OwnerId TEXT NOT NULL,
+                OwnerDescription TEXT,
+                AcquiredAt TEXT NOT NULL,
+                ExpiresAt TEXT,
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT,
+                DeletedAt TEXT,
+                IsDeleted INTEGER NOT NULL DEFAULT 0,
+                Version BLOB,
+                FOREIGN KEY (RepositoryId) REFERENCES Repositories(Id) ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_SourceWorkspaceLeases_RepositoryId ON SourceWorkspaceLeases (RepositoryId)");
+
+        // P4 Phase3 WP1 fix: generation-isolated catalog/doc content
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "DocCatalogs", "GenerationId", "TEXT NOT NULL DEFAULT ''");
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "DocFiles", "GenerationId", "TEXT NOT NULL DEFAULT ''");
+        // SQLite cannot easily drop unique indexes by convention; create the generation-aware unique index.
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_DocCatalogs_BranchLanguageId_Path_GenerationId ON DocCatalogs (BranchLanguageId, Path, GenerationId)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_DocFiles_BranchLanguageId_GenerationId ON DocFiles (BranchLanguageId, GenerationId)");
     }
 
     private static async Task AddSqliteColumnIfMissingAsync(
@@ -766,5 +901,142 @@ public static class DbInitializer
             CREATE INDEX IF NOT EXISTS ""IX_RepositoryProcessingLogs_BranchId"" ON ""RepositoryProcessingLogs"" (""BranchId"")");
         await ctx.Database.ExecuteSqlRawAsync(@"
             CREATE INDEX IF NOT EXISTS ""IX_RepositoryProcessingLogs_GenerationTaskId"" ON ""RepositoryProcessingLogs"" (""GenerationTaskId"")");
+
+        // P4 Phase3 WP1: Scope / Snapshot
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""RepositoryScopeConfigurations"" (
+                ""Id"" TEXT NOT NULL PRIMARY KEY,
+                ""RepositoryId"" TEXT NOT NULL,
+                ""ConfigurationVersion"" INTEGER NOT NULL,
+                ""ConfigurationJson"" TEXT NOT NULL,
+                ""ContentHash"" TEXT NOT NULL,
+                ""IsCurrent"" BOOLEAN NOT NULL,
+                ""ReindexRequired"" BOOLEAN NOT NULL,
+                ""IsLegacyFallback"" BOOLEAN NOT NULL,
+                ""CreatedByUserId"" TEXT,
+                ""ChangeSummary"" TEXT,
+                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""UpdatedAt"" TIMESTAMP WITH TIME ZONE,
+                ""DeletedAt"" TIMESTAMP WITH TIME ZONE,
+                ""IsDeleted"" BOOLEAN NOT NULL DEFAULT FALSE,
+                ""Version"" BYTEA,
+                FOREIGN KEY (""RepositoryId"") REFERENCES ""Repositories""(""Id"") ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_RepositoryScopeConfigurations_RepositoryId_ConfigurationVersion"" ON ""RepositoryScopeConfigurations"" (""RepositoryId"", ""ConfigurationVersion"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_RepositoryScopeConfigurations_RepositoryId_IsCurrent"" ON ""RepositoryScopeConfigurations"" (""RepositoryId"", ""IsCurrent"")");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""RepositoryScopeAuditLogs"" (
+                ""Id"" TEXT NOT NULL PRIMARY KEY,
+                ""RepositoryId"" TEXT NOT NULL,
+                ""PreviousConfigurationVersion"" INTEGER,
+                ""ConfigurationVersion"" INTEGER NOT NULL,
+                ""PreviousContentHash"" TEXT,
+                ""ContentHash"" TEXT NOT NULL,
+                ""ActorUserId"" TEXT,
+                ""Action"" TEXT NOT NULL,
+                ""ImpactPreviewJson"" TEXT,
+                ""Notes"" TEXT,
+                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""UpdatedAt"" TIMESTAMP WITH TIME ZONE,
+                ""DeletedAt"" TIMESTAMP WITH TIME ZONE,
+                ""IsDeleted"" BOOLEAN NOT NULL DEFAULT FALSE,
+                ""Version"" BYTEA,
+                FOREIGN KEY (""RepositoryId"") REFERENCES ""Repositories""(""Id"") ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_RepositoryScopeAuditLogs_RepositoryId_CreatedAt"" ON ""RepositoryScopeAuditLogs"" (""RepositoryId"", ""CreatedAt"")");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""WikiGenerations"" (
+                ""Id"" TEXT NOT NULL PRIMARY KEY,
+                ""RepositoryId"" TEXT NOT NULL,
+                ""BranchId"" TEXT NOT NULL,
+                ""BranchLanguageId"" TEXT NOT NULL,
+                ""Status"" INTEGER NOT NULL,
+                ""ScopeConfigurationVersion"" INTEGER,
+                ""ScopeContentHash"" TEXT,
+                ""TargetRevision"" TEXT,
+                ""TrackedManifestHash"" TEXT,
+                ""GenerationEngineVersion"" TEXT,
+                ""SnapshotIdentity"" TEXT,
+                ""PublicationIdentity"" TEXT,
+                ""LanguageCode"" TEXT,
+                ""ManifestJson"" TEXT,
+                ""ErrorMessage"" TEXT,
+                ""StartedAt"" TIMESTAMP WITH TIME ZONE,
+                ""PublishedAt"" TIMESTAMP WITH TIME ZONE,
+                ""FailedAt"" TIMESTAMP WITH TIME ZONE,
+                ""OwnerTaskId"" TEXT,
+                ""OwnerTaskType"" TEXT,
+                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""UpdatedAt"" TIMESTAMP WITH TIME ZONE,
+                ""DeletedAt"" TIMESTAMP WITH TIME ZONE,
+                ""IsDeleted"" BOOLEAN NOT NULL DEFAULT FALSE,
+                ""Version"" BYTEA,
+                FOREIGN KEY (""RepositoryId"") REFERENCES ""Repositories""(""Id"") ON DELETE CASCADE,
+                FOREIGN KEY (""BranchId"") REFERENCES ""RepositoryBranches""(""Id"") ON DELETE CASCADE,
+                FOREIGN KEY (""BranchLanguageId"") REFERENCES ""BranchLanguages""(""Id"") ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_WikiGenerations_BranchLanguageId_Status_CreatedAt"" ON ""WikiGenerations"" (""BranchLanguageId"", ""Status"", ""CreatedAt"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_WikiGenerations_RepositoryId_BranchId_Status"" ON ""WikiGenerations"" (""RepositoryId"", ""BranchId"", ""Status"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_WikiGenerations_PublicationIdentity"" ON ""WikiGenerations"" (""PublicationIdentity"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_WikiGenerations_BranchId"" ON ""WikiGenerations"" (""BranchId"")");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""BranchLanguagePublications"" (
+                ""Id"" TEXT NOT NULL PRIMARY KEY,
+                ""BranchLanguageId"" TEXT NOT NULL,
+                ""CurrentGenerationId"" TEXT,
+                ""DerivativeSourceGenerationId"" TEXT,
+                ""PublishedAt"" TIMESTAMP WITH TIME ZONE,
+                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""UpdatedAt"" TIMESTAMP WITH TIME ZONE,
+                ""DeletedAt"" TIMESTAMP WITH TIME ZONE,
+                ""IsDeleted"" BOOLEAN NOT NULL DEFAULT FALSE,
+                ""Version"" BYTEA,
+                FOREIGN KEY (""BranchLanguageId"") REFERENCES ""BranchLanguages""(""Id"") ON DELETE CASCADE,
+                FOREIGN KEY (""CurrentGenerationId"") REFERENCES ""WikiGenerations""(""Id"") ON DELETE SET NULL
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_BranchLanguagePublications_BranchLanguageId"" ON ""BranchLanguagePublications"" (""BranchLanguageId"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_BranchLanguagePublications_CurrentGenerationId"" ON ""BranchLanguagePublications"" (""CurrentGenerationId"")");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""SourceWorkspaceLeases"" (
+                ""Id"" TEXT NOT NULL PRIMARY KEY,
+                ""RepositoryId"" TEXT NOT NULL,
+                ""Purpose"" TEXT NOT NULL,
+                ""OwnerId"" TEXT NOT NULL,
+                ""OwnerDescription"" TEXT,
+                ""AcquiredAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""ExpiresAt"" TIMESTAMP WITH TIME ZONE,
+                ""CreatedAt"" TIMESTAMP WITH TIME ZONE NOT NULL,
+                ""UpdatedAt"" TIMESTAMP WITH TIME ZONE,
+                ""DeletedAt"" TIMESTAMP WITH TIME ZONE,
+                ""IsDeleted"" BOOLEAN NOT NULL DEFAULT FALSE,
+                ""Version"" BYTEA,
+                FOREIGN KEY (""RepositoryId"") REFERENCES ""Repositories""(""Id"") ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_SourceWorkspaceLeases_RepositoryId"" ON ""SourceWorkspaceLeases"" (""RepositoryId"")");
+
+        // P4 Phase3 WP1 fix: generation-isolated catalog/doc content
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""DocCatalogs"" ADD COLUMN IF NOT EXISTS ""GenerationId"" TEXT NOT NULL DEFAULT '';
+            ALTER TABLE ""DocFiles"" ADD COLUMN IF NOT EXISTS ""GenerationId"" TEXT NOT NULL DEFAULT '';");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            DROP INDEX IF EXISTS ""IX_DocCatalogs_BranchLanguageId_Path""");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_DocCatalogs_BranchLanguageId_Path_GenerationId"" ON ""DocCatalogs"" (""BranchLanguageId"", ""Path"", ""GenerationId"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_DocFiles_BranchLanguageId_GenerationId"" ON ""DocFiles"" (""BranchLanguageId"", ""GenerationId"")");
     }
 }

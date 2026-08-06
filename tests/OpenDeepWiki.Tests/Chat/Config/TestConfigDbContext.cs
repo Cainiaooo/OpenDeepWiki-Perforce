@@ -60,6 +60,11 @@ public class TestConfigDbContext : DbContext, IContext
     public DbSet<McpDailyStatistics> McpDailyStatistics { get; set; }
     public DbSet<ApiKey> ApiKeys { get; set; }
     public DbSet<ChatShareSnapshot> ChatShareSnapshots { get; set; } = default!;
+    public DbSet<RepositoryScopeConfiguration> RepositoryScopeConfigurations { get; set; } = null!;
+    public DbSet<RepositoryScopeAuditLog> RepositoryScopeAuditLogs { get; set; } = null!;
+    public DbSet<WikiGeneration> WikiGenerations { get; set; } = null!;
+    public DbSet<BranchLanguagePublication> BranchLanguagePublications { get; set; } = null!;
+    public DbSet<SourceWorkspaceLease> SourceWorkspaceLeases { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

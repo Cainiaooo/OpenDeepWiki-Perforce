@@ -27,6 +27,13 @@ public class DocFile : AggregateRoot<string>
     public string? SourceFiles { get; set; }
 
     /// <summary>
+    /// Wiki 发布世代 ID。空字符串表示遗留正文。
+    /// </summary>
+    [Required]
+    [StringLength(36)]
+    public string GenerationId { get; set; } = string.Empty;
+
+    /// <summary>
     /// 分支语言导航属性
     /// </summary>
     [ForeignKey("BranchLanguageId")]

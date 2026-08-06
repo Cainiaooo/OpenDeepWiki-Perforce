@@ -52,6 +52,11 @@ public interface IContext : IDisposable
     DbSet<McpUsageLog> McpUsageLogs { get; set; }
     DbSet<McpDailyStatistics> McpDailyStatistics { get; set; }
     DbSet<ApiKey> ApiKeys { get; set; }
+    DbSet<RepositoryScopeConfiguration> RepositoryScopeConfigurations { get; set; }
+    DbSet<RepositoryScopeAuditLog> RepositoryScopeAuditLogs { get; set; }
+    DbSet<WikiGeneration> WikiGenerations { get; set; }
+    DbSet<BranchLanguagePublication> BranchLanguagePublications { get; set; }
+    DbSet<SourceWorkspaceLease> SourceWorkspaceLeases { get; set; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
@@ -109,6 +114,11 @@ public abstract class MasterDbContext : DbContext, IContext
     public DbSet<McpUsageLog> McpUsageLogs { get; set; } = null!;
     public DbSet<McpDailyStatistics> McpDailyStatistics { get; set; } = null!;
     public DbSet<ApiKey> ApiKeys { get; set; } = null!;
+    public DbSet<RepositoryScopeConfiguration> RepositoryScopeConfigurations { get; set; } = null!;
+    public DbSet<RepositoryScopeAuditLog> RepositoryScopeAuditLogs { get; set; } = null!;
+    public DbSet<WikiGeneration> WikiGenerations { get; set; } = null!;
+    public DbSet<BranchLanguagePublication> BranchLanguagePublications { get; set; } = null!;
+    public DbSet<SourceWorkspaceLease> SourceWorkspaceLeases { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -151,10 +161,21 @@ public abstract class MasterDbContext : DbContext, IContext
             .HasForeignKey(catalog => catalog.ParentId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // DocCatalog 路径唯一索引（同一分支语言下路径唯一）
+        // DocCatalog 路径唯一索引（同一分支语言 + generation 下路径唯一，支持 staging 隔离）
         modelBuilder.Entity<DocCatalog>()
-            .HasIndex(catalog => new { catalog.BranchLanguageId, catalog.Path })
+            .Property(catalog => catalog.GenerationId)
+            .HasMaxLength(36)
+            .HasAnnotation("Relational:DefaultValue", "");
+        modelBuilder.Entity<DocCatalog>()
+            .HasIndex(catalog => new { catalog.BranchLanguageId, catalog.Path, catalog.GenerationId })
             .IsUnique();
+
+        modelBuilder.Entity<DocFile>()
+            .Property(file => file.GenerationId)
+            .HasMaxLength(36)
+            .HasAnnotation("Relational:DefaultValue", "");
+        modelBuilder.Entity<DocFile>()
+            .HasIndex(file => new { file.BranchLanguageId, file.GenerationId });
 
         // DocCatalog 与 DocFile 关联
         modelBuilder.Entity<DocCatalog>()
@@ -484,6 +505,57 @@ public abstract class MasterDbContext : DbContext, IContext
         {
             entity.HasIndex(e => e.KeyPrefix).IsUnique();
             entity.HasIndex(e => e.UserId);
+        });
+
+        // P4 Phase3 WP1: Scope configuration, snapshot generation, workspace lease
+        modelBuilder.Entity<RepositoryScopeConfiguration>(entity =>
+        {
+            entity.HasIndex(e => new { e.RepositoryId, e.ConfigurationVersion }).IsUnique();
+            entity.HasIndex(e => new { e.RepositoryId, e.IsCurrent });
+            entity.Property(e => e.ContentHash).HasMaxLength(64);
+            entity.Property(e => e.CreatedByUserId).HasMaxLength(36);
+            entity.Property(e => e.ChangeSummary).HasMaxLength(200);
+        });
+
+        modelBuilder.Entity<RepositoryScopeAuditLog>(entity =>
+        {
+            entity.HasIndex(e => new { e.RepositoryId, e.CreatedAt });
+            entity.Property(e => e.ContentHash).HasMaxLength(64);
+            entity.Property(e => e.PreviousContentHash).HasMaxLength(64);
+            entity.Property(e => e.ActorUserId).HasMaxLength(36);
+            entity.Property(e => e.Action).HasMaxLength(100);
+            entity.Property(e => e.Notes).HasMaxLength(2000);
+        });
+
+        modelBuilder.Entity<WikiGeneration>(entity =>
+        {
+            entity.HasIndex(e => new { e.BranchLanguageId, e.Status, e.CreatedAt });
+            entity.HasIndex(e => new { e.RepositoryId, e.BranchId, e.Status });
+            entity.HasIndex(e => e.PublicationIdentity);
+            entity.Property(e => e.TargetRevision).HasMaxLength(40);
+            entity.Property(e => e.TrackedManifestHash).HasMaxLength(64);
+            entity.Property(e => e.ScopeContentHash).HasMaxLength(64);
+            entity.Property(e => e.GenerationEngineVersion).HasMaxLength(64);
+            entity.Property(e => e.SnapshotIdentity).HasMaxLength(500);
+            entity.Property(e => e.PublicationIdentity).HasMaxLength(550);
+            entity.Property(e => e.LanguageCode).HasMaxLength(50);
+            entity.Property(e => e.OwnerTaskId).HasMaxLength(36);
+            entity.Property(e => e.OwnerTaskType).HasMaxLength(50);
+        });
+
+        modelBuilder.Entity<BranchLanguagePublication>(entity =>
+        {
+            entity.HasIndex(e => e.BranchLanguageId).IsUnique();
+            entity.Property(e => e.CurrentGenerationId).HasMaxLength(36);
+            entity.Property(e => e.DerivativeSourceGenerationId).HasMaxLength(36);
+        });
+
+        modelBuilder.Entity<SourceWorkspaceLease>(entity =>
+        {
+            entity.HasIndex(e => e.RepositoryId).IsUnique();
+            entity.Property(e => e.Purpose).HasMaxLength(100);
+            entity.Property(e => e.OwnerId).HasMaxLength(36);
+            entity.Property(e => e.OwnerDescription).HasMaxLength(200);
         });
     }
 }

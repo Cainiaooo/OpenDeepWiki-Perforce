@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Services.Repositories.Perforce;
 
@@ -45,6 +46,7 @@ public sealed class PerforceIncrementalEventService(
     IChangelistFilterPipeline filterPipeline,
     IIncrementalUpdateService incrementalUpdateService,
     IBranchGenerationTaskService branchGenerationTaskService,
+    IScopeConfigurationService scopeConfigurationService,
     IOptionsMonitor<PerforceOptions> optionsMonitor,
     ILogger<PerforceIncrementalEventService> logger) : IPerforceIncrementalEventService
 {
@@ -225,6 +227,13 @@ public sealed class PerforceIncrementalEventService(
         var includedChangelists = 0;
         var inspectedFiles = 0;
 
+        // Scope 配置存在时，文件级路径/后缀判定统一委托 IRepositoryFileSelectionPolicy；
+        // 无 Scope 时保持 phase-two 过滤管线兼容行为。
+        var scopeConfig = await scopeConfigurationService.GetResolvedCurrentAsync(repositoryId, cancellationToken);
+        var selectionPolicy = scopeConfig is null
+            ? null
+            : await scopeConfigurationService.GetPolicyAsync(repositoryId, cancellationToken);
+
         foreach (var changelist in changelists)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -247,13 +256,45 @@ public sealed class PerforceIncrementalEventService(
             foreach (var file in fileChanges)
             {
                 inspectedFiles++;
-                var fileDecision = filterPipeline.EvaluateFile(file, filterOptions);
-                if (!fileDecision.Included)
+                if (selectionPolicy is not null)
                 {
-                    logger.LogDebug(
-                        "Perforce file filtered. CL: {Changelist}, Path: {Path}, Reason: {Reason}",
-                        changelist.Number, file.WorkspaceRelativePath, fileDecision.Reason);
-                    continue;
+                    // Action 仍由配置控制；路径/后缀/Scope 由统一策略判定。
+                    if (filterOptions.IncludedActions.Count > 0
+                        && !filterOptions.IncludedActions.Any(action =>
+                            action.Equals(file.Action, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        logger.LogDebug(
+                            "Perforce file action filtered. CL: {Changelist}, Path: {Path}, Action: {Action}",
+                            changelist.Number, file.WorkspaceRelativePath, file.Action);
+                        continue;
+                    }
+
+                    var scopeDecision = selectionPolicy.EvaluateChangeTrigger(
+                        file.WorkspaceRelativePath,
+                        new SourceFileMetadata
+                        {
+                            DepotPath = file.DepotPath,
+                            FileType = file.FileType,
+                            IsTracked = true
+                        });
+                    if (!scopeDecision.Accepted)
+                    {
+                        logger.LogDebug(
+                            "Perforce file scope-filtered. CL: {Changelist}, Path: {Path}, Reason: {Reason}",
+                            changelist.Number, file.WorkspaceRelativePath, scopeDecision.ReasonCode);
+                        continue;
+                    }
+                }
+                else
+                {
+                    var fileDecision = filterPipeline.EvaluateFile(file, filterOptions);
+                    if (!fileDecision.Included)
+                    {
+                        logger.LogDebug(
+                            "Perforce file filtered. CL: {Changelist}, Path: {Path}, Reason: {Reason}",
+                            changelist.Number, file.WorkspaceRelativePath, fileDecision.Reason);
+                        continue;
+                    }
                 }
 
                 includedAnyFile = true;

@@ -4,6 +4,7 @@ using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Infrastructure;
 using OpenDeepWiki.Models;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Services.Wiki;
 
@@ -24,9 +25,11 @@ public class WikiService(IContext context)
         var branch = await GetDefaultBranchAsync(repository.Id);
         var language = await GetDefaultLanguageAsync(branch.Id);
 
-        var catalogs = await context.DocCatalogs
-            .AsNoTracking()
-            .Where(c => c.BranchLanguageId == language.Id && !c.IsDeleted)
+        var publishedGenerationId = await WikiPublicationQuery.GetPublishedGenerationIdAsync(
+            context, language.Id);
+
+        var catalogs = await WikiPublicationQuery
+            .FilterVisibleCatalogs(context.DocCatalogs.AsNoTracking(), language.Id, publishedGenerationId)
             .OrderBy(c => c.Order)
             .ToListAsync();
 
@@ -59,18 +62,21 @@ public class WikiService(IContext context)
         var language = await GetDefaultLanguageAsync(branch.Id);
         var normalizedPath = NormalizePath(path);
 
-        var catalog = await context.DocCatalogs
-            .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.BranchLanguageId == language.Id && c.Path == normalizedPath);
+        var publishedGenerationId = await WikiPublicationQuery.GetPublishedGenerationIdAsync(
+            context, language.Id);
+
+        var catalog = await WikiPublicationQuery
+            .FilterVisibleCatalogs(context.DocCatalogs.AsNoTracking(), language.Id, publishedGenerationId)
+            .FirstOrDefaultAsync(c => c.Path == normalizedPath);
 
         if (catalog is null)
         {
             throw new KeyNotFoundException($"文档路径 '{normalizedPath}' 不存在");
         }
 
-        var hasChildren = await context.DocCatalogs
-            .AsNoTracking()
-            .AnyAsync(c => c.BranchLanguageId == language.Id && c.ParentId == catalog.Id && !c.IsDeleted);
+        var hasChildren = await WikiPublicationQuery
+            .FilterVisibleCatalogs(context.DocCatalogs.AsNoTracking(), language.Id, publishedGenerationId)
+            .AnyAsync(c => c.ParentId == catalog.Id);
 
         if (hasChildren)
         {

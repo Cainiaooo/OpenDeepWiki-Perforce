@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.AI;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Agents.Tools;
 
@@ -15,6 +16,7 @@ public class DocTool
 {
     private readonly IContext _context;
     private readonly string _branchLanguageId;
+    private readonly string _generationId;
     private readonly string? _catalogPath;
     private readonly GitTool? _gitTool;
     private readonly int? _maxAppendOperations;
@@ -30,18 +32,23 @@ public class DocTool
     /// <param name="catalogPath">The catalog item path this tool operates on.</param>
     /// <param name="gitTool">Optional GitTool instance to track read files.</param>
     /// <param name="maxAppendOperations">Optional maximum AppendDoc calls for this document.</param>
+    /// <param name="generationId">Optional generation scope; defaults to WikiGenerationContext.</param>
     public DocTool(
         IContext context,
         string branchLanguageId,
         string? catalogPath,
         GitTool? gitTool = null,
-        int? maxAppendOperations = null)
+        int? maxAppendOperations = null,
+        string? generationId = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _branchLanguageId = branchLanguageId ?? throw new ArgumentNullException(nameof(branchLanguageId));
         _catalogPath = NormalizeCatalogPath(catalogPath);
         _gitTool = gitTool;
         _maxAppendOperations = maxAppendOperations is > 0 ? maxAppendOperations : null;
+        _generationId = generationId
+                        ?? WikiGenerationContext.CurrentGenerationId
+                        ?? WikiPublicationQuery.LegacyGenerationId;
     }
 
     /// <summary>
@@ -85,6 +92,7 @@ content: '# Overview\n\nThis is the overview section...'")]
             var catalog = await _context.DocCatalogs
                 .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId &&
                                           c.Path == catalogPath &&
+                                          c.GenerationId == _generationId &&
                                           !c.IsDeleted, cancellationToken);
 
             if (catalog == null)
@@ -134,7 +142,8 @@ content: '# Overview\n\nThis is the overview section...'")]
                 Id = Guid.NewGuid().ToString(),
                 BranchLanguageId = _branchLanguageId,
                 Content = content,
-                SourceFiles = sourceFilesJson
+                SourceFiles = sourceFilesJson,
+                GenerationId = _generationId
             };
 
             _context.DocFiles.Add(docFile);
@@ -200,6 +209,7 @@ content: '\n## Failure Modes\n\nThe service handles ... '")]
             var catalog = await _context.DocCatalogs
                 .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId &&
                                           c.Path == catalogPath &&
+                                          c.GenerationId == _generationId &&
                                           !c.IsDeleted, cancellationToken);
 
             if (catalog == null)
@@ -312,6 +322,7 @@ newContent: '## New Section\n\nUpdated content here'")]
             var catalog = await _context.DocCatalogs
                 .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId &&
                                           c.Path == catalogPath &&
+                                          c.GenerationId == _generationId &&
                                           !c.IsDeleted, cancellationToken);
 
             if (catalog == null)
@@ -384,8 +395,9 @@ Usage:
 
         // Find the catalog item
         var catalog = await _context.DocCatalogs
-            .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId && 
-                                      c.Path == catalogPath && 
+            .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId &&
+                                      c.Path == catalogPath &&
+                                      c.GenerationId == _generationId &&
                                       !c.IsDeleted, cancellationToken);
 
         if (catalog == null || string.IsNullOrEmpty(catalog.DocFileId) ||
@@ -427,8 +439,9 @@ Usage:
         }
 
         var catalog = await _context.DocCatalogs
-            .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId && 
-                                      c.Path == catalogPath && 
+            .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId &&
+                                      c.Path == catalogPath &&
+                                      c.GenerationId == _generationId &&
                                       !c.IsDeleted, cancellationToken);
 
         if (catalog == null || string.IsNullOrEmpty(catalog.DocFileId) ||
@@ -482,6 +495,7 @@ Usage:
         return await _context.DocCatalogs
             .AnyAsync(c => c.BranchLanguageId == _branchLanguageId &&
                            c.ParentId == catalogId &&
+                           c.GenerationId == _generationId &&
                            !c.IsDeleted, cancellationToken);
     }
 

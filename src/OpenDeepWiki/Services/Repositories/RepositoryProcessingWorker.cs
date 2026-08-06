@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Scope;
 using OpenDeepWiki.Services.Translation;
 using OpenDeepWiki.Services.Wiki;
 using System.Diagnostics;
@@ -462,14 +463,29 @@ public class RepositoryProcessingWorker(
             language.Id, language.LanguageCode, workspace.Organization, workspace.RepositoryName,
             isIncremental ? "Incremental" : "Full");
 
+        using var scope = scopeFactory.CreateScope();
+        var wikiGenerationService = scope.ServiceProvider.GetRequiredService<IWikiGenerationService>();
+        var scopeConfigurationService = scope.ServiceProvider.GetRequiredService<IScopeConfigurationService>();
+        var policyFactory = scope.ServiceProvider.GetRequiredService<IRepositoryFileSelectionPolicyFactory>();
+
         try
         {
             if (isIncremental && changedFiles != null && changedFiles.Length > 0)
             {
-                // Incremental update: only update affected documents
                 logger.LogDebug("Performing incremental update for {LanguageCode} with {FileCount} changed files",
                     language.LanguageCode, changedFiles.Length);
-                    
+
+                await using var policySession = await WikiGenerationSession.BeginPolicyOnlyAsync(
+                    scopeConfigurationService,
+                    policyFactory,
+                    repository.Id,
+                    workspace.WorkingDirectory,
+                    stoppingToken);
+
+                var publishedId = await WikiPublicationQuery.GetPublishedGenerationIdAsync(
+                    context, language.Id, stoppingToken);
+                WikiGenerationContext.CurrentGenerationId = publishedId;
+
                 await wikiGenerator.IncrementalUpdateAsync(
                     workspace,
                     language,
@@ -478,16 +494,36 @@ public class RepositoryProcessingWorker(
             }
             else
             {
-                // Full generation: generate catalog and all documents
-                // 思维导图由 MindMapWorker 独立后台任务生成
-                // 翻译任务由 TranslationWorker 独立后台任务扫描并创建
                 logger.LogDebug("Performing full wiki generation for {LanguageCode}", language.LanguageCode);
-                
-                logger.LogInformation("Generating catalog for {LanguageCode}", language.LanguageCode);
-                await wikiGenerator.GenerateCatalogAsync(workspace, language, stoppingToken);
-                
-                logger.LogInformation("Generating documents for {LanguageCode}", language.LanguageCode);
-                await wikiGenerator.GenerateDocumentsAsync(workspace, language, stoppingToken);
+
+                await using var session = await WikiGenerationSession.BeginFullGenerationAsync(
+                    context,
+                    wikiGenerationService,
+                    scopeConfigurationService,
+                    policyFactory,
+                    repository,
+                    branch,
+                    language,
+                    ownerTaskId: null,
+                    ownerTaskType: "repository-full",
+                    workspace.WorkingDirectory,
+                    stoppingToken);
+
+                try
+                {
+                    logger.LogInformation("Generating catalog for {LanguageCode}", language.LanguageCode);
+                    await wikiGenerator.GenerateCatalogAsync(workspace, language, stoppingToken);
+
+                    logger.LogInformation("Generating documents for {LanguageCode}", language.LanguageCode);
+                    await wikiGenerator.GenerateDocumentsAsync(workspace, language, stoppingToken);
+
+                    await session.PublishAsync(stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    await session.FailAsync(ex.Message, stoppingToken);
+                    throw;
+                }
             }
 
             if (repository.GenerateSkill && skillMarkdownBuilder is not null)

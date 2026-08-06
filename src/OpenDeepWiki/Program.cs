@@ -23,6 +23,7 @@ using OpenDeepWiki.Services.Prompts;
 using OpenDeepWiki.Services.Recommendation;
 using OpenDeepWiki.Services.Repositories;
 using OpenDeepWiki.Services.Repositories.Perforce;
+using OpenDeepWiki.Services.Repositories.Scope;
 using OpenDeepWiki.Services.Translation;
 using OpenDeepWiki.Services.Mcp;
 using OpenDeepWiki.Services.UserProfile;
@@ -189,6 +190,15 @@ try
     builder.Services.AddSingleton<IFileChangeFilter, FileContentTypeFilter>();
     builder.Services.AddSingleton<IChangelistFilterPipeline, ChangelistFilterPipeline>();
     builder.Services.AddScoped<IPerforceIncrementalEventService, PerforceIncrementalEventService>();
+
+    // Perforce phase-three WP1: Scope, file selection, workspace lease, staging publication
+    builder.Services.AddSingleton<IScopeConfigurationValidator, ScopeConfigurationValidator>();
+    builder.Services.AddSingleton<IScopeConfigurationNormalizer, ScopeConfigurationNormalizer>();
+    builder.Services.AddSingleton<IRepositoryFileSelectionPolicyFactory, RepositoryFileSelectionPolicyFactory>();
+    builder.Services.AddSingleton<IWorkspaceManifestService, WorkspaceManifestService>();
+    builder.Services.AddScoped<IScopeConfigurationService, ScopeConfigurationService>();
+    builder.Services.AddScoped<ISourceWorkspaceLease, SourceWorkspaceLeaseService>();
+    builder.Services.AddScoped<IWikiGenerationService, WikiGenerationService>();
 
     // Configure Graphify artifact generation
     builder.Services.AddOptions<GraphifyOptions>()
@@ -420,6 +430,7 @@ try
     app.MapSystemEndpoints();
     app.MapIncrementalUpdateEndpoints();
     app.MapBranchGenerationEndpoints();
+    app.MapScopeConfigurationEndpoints();
     app.MapMcpProviderEndpoints();
 
     // 初始化数据库（创建默认数据）

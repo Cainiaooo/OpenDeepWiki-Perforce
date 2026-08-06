@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Agents.Tools;
 
@@ -7,17 +8,40 @@ public sealed class RepositoryFileFilter
 {
     private readonly string _workingDirectory;
     private readonly List<GitIgnoreRule> _gitIgnoreRules;
+    private readonly IRepositoryFileSelectionPolicy? _selectionPolicy;
 
-    public RepositoryFileFilter(string workingDirectory)
+    public RepositoryFileFilter(
+        string workingDirectory,
+        IRepositoryFileSelectionPolicy? selectionPolicy = null)
     {
         _workingDirectory = Path.GetFullPath(workingDirectory);
         _gitIgnoreRules = ParseGitIgnore(_workingDirectory);
+        _selectionPolicy = selectionPolicy ?? WikiGenerationContext.SelectionPolicy;
     }
 
     public bool IsIgnored(string fullPath)
     {
         var relativePath = GetRelativePath(fullPath);
-        return IsHiddenPath(relativePath) || IsIgnoredByGitIgnore(relativePath);
+        if (IsHiddenPath(relativePath) || IsIgnoredByGitIgnore(relativePath))
+        {
+            return true;
+        }
+
+        if (_selectionPolicy is null)
+        {
+            return ScopePathUtility.EvaluateSafety(relativePath, _workingDirectory) is not null;
+        }
+
+        // Directory prune for tree walks; files outside document+context are ignored.
+        if (Directory.Exists(fullPath))
+        {
+            return _selectionPolicy.ShouldPruneDirectory(
+                relativePath,
+                FileSelectionOperation.ContextRead);
+        }
+
+        return !_selectionPolicy.IsDocumentCandidate(relativePath)
+               && !_selectionPolicy.CanReadAsContext(relativePath);
     }
 
     public bool IsLowValueFile(string fullPath)

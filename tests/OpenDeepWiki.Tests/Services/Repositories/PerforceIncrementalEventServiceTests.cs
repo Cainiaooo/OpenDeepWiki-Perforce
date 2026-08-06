@@ -376,12 +376,17 @@ public class PerforceIncrementalEventServiceTests
         var pipeline = new ChangelistFilterPipeline(
             [new ChangelistUserFilter(), new ChangelistDescriptionFilter()],
             [new FileActionFilter(), new FilePathFilter(), new FileContentTypeFilter()]);
+        var scopeService = new Mock<OpenDeepWiki.Services.Repositories.Scope.IScopeConfigurationService>();
+        scopeService
+            .Setup(s => s.GetResolvedCurrentAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((OpenDeepWiki.Services.Repositories.Scope.ResolvedScopeConfiguration?)null);
         var service = new PerforceIncrementalEventService(
             context,
             p4.Object,
             pipeline,
             incremental.Object,
             fullGeneration.Object,
+            scopeService.Object,
             monitor.Object,
             Mock.Of<ILogger<PerforceIncrementalEventService>>());
 

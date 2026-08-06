@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Agents.Tools;
 
@@ -14,6 +15,7 @@ public class GitTool
 {
     private readonly string _workingDirectory;
     private readonly List<GitIgnoreRule> _gitIgnoreRules;
+    private readonly IRepositoryFileSelectionPolicy? _selectionPolicy;
     private readonly HashSet<string> _readFiles = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -35,7 +37,10 @@ public class GitTool
     /// Initializes a new instance of GitTool with the specified working directory.
     /// </summary>
     /// <param name="workingDirectory">The absolute path to the repository working directory.</param>
-    public GitTool(string workingDirectory)
+    /// <param name="selectionPolicy">
+    /// Optional Scope selection policy. Defaults to <see cref="WikiGenerationContext.SelectionPolicy"/>.
+    /// </param>
+    public GitTool(string workingDirectory, IRepositoryFileSelectionPolicy? selectionPolicy = null)
     {
         if (string.IsNullOrWhiteSpace(workingDirectory))
         {
@@ -51,6 +56,7 @@ public class GitTool
 
         // 解析 .gitignore 文件
         _gitIgnoreRules = RepositoryFileFilter.ParseGitIgnore(_workingDirectory);
+        _selectionPolicy = selectionPolicy ?? WikiGenerationContext.SelectionPolicy;
     }
 
     /// <summary>
@@ -81,11 +87,11 @@ public class GitTool
     {
         if (string.IsNullOrWhiteSpace(glob))
         {
-            // No pattern - return all files (filtered by gitignore)
+            // No pattern - return all files (filtered by gitignore + scope)
             foreach (var file in Directory.EnumerateFiles(_workingDirectory, "*", SearchOption.AllDirectories))
             {
                 var relativePath = GetRelativePath(file);
-                if (!IsIgnoredByGitIgnore(relativePath))
+                if (!IsIgnoredByGitIgnore(relativePath) && IsAllowedByScope(relativePath, forRead: false))
                 {
                     yield return file;
                 }
@@ -100,11 +106,31 @@ public class GitTool
         foreach (var file in Directory.EnumerateFiles(_workingDirectory, "*", SearchOption.AllDirectories))
         {
             var relativePath = GetRelativePath(file);
-            if (!IsIgnoredByGitIgnore(relativePath) && globRegex.IsMatch(relativePath))
+            if (!IsIgnoredByGitIgnore(relativePath)
+                && IsAllowedByScope(relativePath, forRead: false)
+                && globRegex.IsMatch(relativePath))
             {
                 yield return file;
             }
         }
+    }
+
+    private bool IsAllowedByScope(string relativePath, bool forRead)
+    {
+        if (_selectionPolicy is null)
+        {
+            // Still enforce path safety + symlink containment against workspace root.
+            return ScopePathUtility.EvaluateSafety(relativePath, _workingDirectory) is null;
+        }
+
+        if (forRead)
+        {
+            return _selectionPolicy.CanReadAsContext(relativePath);
+        }
+
+        // Listing / grep: document candidates or readable context.
+        return _selectionPolicy.IsDocumentCandidate(relativePath)
+               || _selectionPolicy.CanReadAsContext(relativePath);
     }
 
     /// <summary>
@@ -209,6 +235,11 @@ Usage:
             if (!fullPath.StartsWith(_workingDirectory, StringComparison.OrdinalIgnoreCase))
             {
                 return $"ERROR: Access denied. The path '{relativePath}' is outside the repository boundaries. Please use a path relative to the repository root.";
+            }
+
+            if (!IsAllowedByScope(normalizedPath, forRead: true))
+            {
+                return $"ERROR: Access denied by repository scope policy for path '{relativePath}'.";
             }
 
             if (!File.Exists(fullPath))

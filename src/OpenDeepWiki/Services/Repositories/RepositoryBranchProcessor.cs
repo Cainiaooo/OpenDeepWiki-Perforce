@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Scope;
 using OpenDeepWiki.Services.Wiki;
 
 namespace OpenDeepWiki.Services.Repositories;
@@ -24,6 +25,9 @@ public sealed class RepositoryBranchProcessor(
     IRepositorySkillMarkdownBuilder? skillMarkdownBuilder,
     IRepositoryScanPlanResolver? scanPlanResolver,
     IProcessingLogService? processingLogService,
+    IWikiGenerationService wikiGenerationService,
+    IScopeConfigurationService scopeConfigurationService,
+    IRepositoryFileSelectionPolicyFactory policyFactory,
     ILogger<RepositoryBranchProcessor> logger) : IRepositoryBranchProcessor
 {
     public async Task<string?> ProcessBranchAsync(
@@ -196,12 +200,46 @@ public sealed class RepositoryBranchProcessor(
     {
         if (isIncremental && changedFiles != null && changedFiles.Length > 0)
         {
+            await using var policySession = await WikiGenerationSession.BeginPolicyOnlyAsync(
+                scopeConfigurationService,
+                policyFactory,
+                repository.Id,
+                workspace.WorkingDirectory,
+                cancellationToken);
+
+            // 增量写入当前已发布 generation（若有），避免污染读者可见树的同时写进新 staging。
+            var publishedId = await WikiPublicationQuery.GetPublishedGenerationIdAsync(
+                context, language.Id, cancellationToken);
+            WikiGenerationContext.CurrentGenerationId = publishedId;
+
             await wikiGenerator.IncrementalUpdateAsync(workspace, language, changedFiles, cancellationToken);
         }
         else
         {
-            await wikiGenerator.GenerateCatalogAsync(workspace, language, cancellationToken);
-            await wikiGenerator.GenerateDocumentsAsync(workspace, language, cancellationToken);
+            await using var session = await WikiGenerationSession.BeginFullGenerationAsync(
+                context,
+                wikiGenerationService,
+                scopeConfigurationService,
+                policyFactory,
+                repository,
+                branch,
+                language,
+                ownerTaskId: null,
+                ownerTaskType: "branch-full",
+                workspace.WorkingDirectory,
+                cancellationToken);
+
+            try
+            {
+                await wikiGenerator.GenerateCatalogAsync(workspace, language, cancellationToken);
+                await wikiGenerator.GenerateDocumentsAsync(workspace, language, cancellationToken);
+                await session.PublishAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                await session.FailAsync(ex.Message, cancellationToken);
+                throw;
+            }
         }
 
         if (repository.GenerateSkill && skillMarkdownBuilder is not null)
