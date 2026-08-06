@@ -118,6 +118,13 @@ public static class IncrementalUpdateEndpoints
                 IncludedChangelists = result.IncludedChangelists,
                 InspectedFiles = result.InspectedFiles,
                 IncludedFiles = result.IncludedFiles,
+                Changes = result.Changes?.Select(change => new PerforceLogicalChangeResponse
+                {
+                    Changelist = change.Changelist.ToString(),
+                    Action = change.Action,
+                    OldPath = change.OldWorkspaceRelativePath,
+                    NewPath = change.NewWorkspaceRelativePath
+                }).ToList() ?? [],
                 Message = result.Message
             });
         }
@@ -717,7 +724,16 @@ public sealed class PerforceIncrementalEventResponse
     public int IncludedChangelists { get; set; }
     public int InspectedFiles { get; set; }
     public int IncludedFiles { get; set; }
+    public List<PerforceLogicalChangeResponse> Changes { get; set; } = [];
     public string Message { get; set; } = string.Empty;
+}
+
+public sealed class PerforceLogicalChangeResponse
+{
+    public string Changelist { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string? OldPath { get; set; }
+    public string? NewPath { get; set; }
 }
 
 /// <summary>

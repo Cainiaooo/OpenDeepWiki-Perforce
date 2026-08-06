@@ -26,7 +26,8 @@ public sealed record PerforceIncrementalEventResult(
     int IncludedChangelists,
     int InspectedFiles,
     int IncludedFiles,
-    string Message);
+    string Message,
+    IReadOnlyList<PerforceLogicalChange>? Changes = null);
 
 public interface IPerforceIncrementalEventService
 {
@@ -79,7 +80,12 @@ public sealed class PerforceIncrementalEventService(
             throw new DirectoryNotFoundException($"Perforce 工作区不存在: {workspaceRoot}");
         }
 
-        var targetCl = await ResolveTargetChangelistAsync(workspaceRoot, latestChangelist, cancellationToken);
+        var scopeConfig = await scopeConfigurationService.GetResolvedCurrentAsync(repositoryId, cancellationToken);
+        var changeFilespecs = PerforceFilespecBuilder.BuildChangeTriggerFilespecs(workspaceRoot, scopeConfig);
+        var targetCl = await ResolveTargetChangelistAsync(
+            workspaceRoot,
+            latestChangelist,
+            cancellationToken);
         if (!targetCl.HasValue)
         {
             return new PerforceIncrementalEventResult(
@@ -199,12 +205,30 @@ public sealed class PerforceIncrementalEventService(
 
         // Interval discovery still runs on the request path. Cap work via MaxChangelists/MaxFiles
         // and honor cancellation between CLs so reverse proxies can cancel hung scans.
-        var changelists = await perforceClient.GetChangelistsAsync(
-            workspaceRoot,
-            baseCl,
-            targetCl.Value,
-            checked(filterOptions.MaxChangelists + 1),
-            cancellationToken);
+        IReadOnlyList<PerforceChangelist> changelists;
+        if (changeFilespecs.Count == 0)
+        {
+            changelists = [];
+        }
+        else if (scopeConfig is null)
+        {
+            changelists = await perforceClient.GetChangelistsAsync(
+                workspaceRoot,
+                baseCl,
+                targetCl.Value,
+                checked(filterOptions.MaxChangelists + 1),
+                cancellationToken);
+        }
+        else
+        {
+            changelists = await perforceClient.GetChangelistsAsync(
+                workspaceRoot,
+                baseCl,
+                targetCl.Value,
+                checked(filterOptions.MaxChangelists + 1),
+                changeFilespecs,
+                cancellationToken);
+        }
 
         if (changelists.Count > filterOptions.MaxChangelists)
         {
@@ -224,12 +248,12 @@ public sealed class PerforceIncrementalEventService(
             : StringComparer.OrdinalIgnoreCase;
         var changedFiles = new HashSet<string>(comparer);
         var deletedFiles = new HashSet<string>(comparer);
+        var includedChanges = new List<PerforceLogicalChange>();
         var includedChangelists = 0;
         var inspectedFiles = 0;
 
         // Scope 配置存在时，文件级路径/后缀判定统一委托 IRepositoryFileSelectionPolicy；
         // 无 Scope 时保持 phase-two 过滤管线兼容行为。
-        var scopeConfig = await scopeConfigurationService.GetResolvedCurrentAsync(repositoryId, cancellationToken);
         var selectionPolicy = scopeConfig is null
             ? null
             : await scopeConfigurationService.GetPolicyAsync(repositoryId, cancellationToken);
@@ -251,63 +275,60 @@ public sealed class PerforceIncrementalEventService(
                 workspaceRoot,
                 changelist.Number,
                 cancellationToken);
+            inspectedFiles += fileChanges.Count;
+            var actionFilteredFiles = fileChanges
+                .Where(file => IsActionIncluded(file.Action, filterOptions))
+                .ToArray();
+            var logicalChanges = PerforceChangeCollator.Collate(actionFilteredFiles, comparer);
             var includedAnyFile = false;
 
-            foreach (var file in fileChanges)
+            foreach (var change in logicalChanges)
             {
-                inspectedFiles++;
-                if (selectionPolicy is not null)
-                {
-                    // Action 仍由配置控制；路径/后缀/Scope 由统一策略判定。
-                    if (filterOptions.IncludedActions.Count > 0
-                        && !filterOptions.IncludedActions.Any(action =>
-                            action.Equals(file.Action, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        logger.LogDebug(
-                            "Perforce file action filtered. CL: {Changelist}, Path: {Path}, Action: {Action}",
-                            changelist.Number, file.WorkspaceRelativePath, file.Action);
-                        continue;
-                    }
+                var oldIncluded = EvaluatePath(
+                    change,
+                    change.OldWorkspaceRelativePath,
+                    change.OldDepotPath,
+                    isOldPath: true,
+                    selectionPolicy,
+                    filterOptions);
+                var newIncluded = EvaluatePath(
+                    change,
+                    change.NewWorkspaceRelativePath,
+                    change.NewDepotPath,
+                    isOldPath: false,
+                    selectionPolicy,
+                    filterOptions);
 
-                    var scopeDecision = selectionPolicy.EvaluateChangeTrigger(
-                        file.WorkspaceRelativePath,
-                        new SourceFileMetadata
-                        {
-                            DepotPath = file.DepotPath,
-                            FileType = file.FileType,
-                            IsTracked = true
-                        });
-                    if (!scopeDecision.Accepted)
-                    {
-                        logger.LogDebug(
-                            "Perforce file scope-filtered. CL: {Changelist}, Path: {Path}, Reason: {Reason}",
-                            changelist.Number, file.WorkspaceRelativePath, scopeDecision.ReasonCode);
-                        continue;
-                    }
-                }
-                else
+                if (!oldIncluded && !newIncluded)
                 {
-                    var fileDecision = filterPipeline.EvaluateFile(file, filterOptions);
-                    if (!fileDecision.Included)
-                    {
-                        logger.LogDebug(
-                            "Perforce file filtered. CL: {Changelist}, Path: {Path}, Reason: {Reason}",
-                            changelist.Number, file.WorkspaceRelativePath, fileDecision.Reason);
-                        continue;
-                    }
+                    continue;
                 }
 
                 includedAnyFile = true;
-                // Last action in the ordered CL walk wins for a given relative path.
-                if (IsDeletion(file.Action))
+                includedChanges.Add(change);
+
+                if (oldIncluded && change.OldWorkspaceRelativePath is not null)
                 {
-                    changedFiles.Remove(file.WorkspaceRelativePath);
-                    deletedFiles.Add(file.WorkspaceRelativePath);
+                    changedFiles.Remove(change.OldWorkspaceRelativePath);
+                    deletedFiles.Add(change.OldWorkspaceRelativePath);
                 }
-                else
+
+                if (newIncluded && change.NewWorkspaceRelativePath is not null)
                 {
-                    deletedFiles.Remove(file.WorkspaceRelativePath);
-                    changedFiles.Add(file.WorkspaceRelativePath);
+                    var isCaseOnlyMove = change.Action.Equals("move", StringComparison.OrdinalIgnoreCase)
+                                         && change.OldWorkspaceRelativePath is not null
+                                         && comparer.Equals(
+                                             change.OldWorkspaceRelativePath,
+                                             change.NewWorkspaceRelativePath)
+                                         && !StringComparer.Ordinal.Equals(
+                                             change.OldWorkspaceRelativePath,
+                                             change.NewWorkspaceRelativePath);
+                    if (!isCaseOnlyMove)
+                    {
+                        deletedFiles.Remove(change.NewWorkspaceRelativePath);
+                    }
+
+                    changedFiles.Add(change.NewWorkspaceRelativePath);
                 }
 
                 var uniqueFileCount = changedFiles.Count + deletedFiles.Count;
@@ -355,7 +376,8 @@ public sealed class PerforceIncrementalEventService(
             includedFileCount,
             includedFileCount == 0
                 ? "区间内变更均被过滤，已创建基线推进任务"
-                : "已创建 Perforce 增量更新任务");
+                : "已创建 Perforce 增量更新任务",
+            includedChanges);
     }
 
     private async Task<long?> ResolveTargetChangelistAsync(
@@ -363,7 +385,9 @@ public sealed class PerforceIncrementalEventService(
         string? latestChangelist,
         CancellationToken cancellationToken)
     {
-        // Always resolve workspace #have so client-supplied values cannot advance the baseline past reality.
+        // Validate against the explicit full-workspace #have filespec. A scoped filespec can
+        // legitimately have no revisions at the requested target CL and must not reject an
+        // otherwise synchronized empty interval.
         var haveCl = await perforceClient.GetLatestChangelistAsync(workspaceRoot, cancellationToken);
         if (!haveCl.HasValue || haveCl.Value <= 0)
         {
@@ -478,10 +502,71 @@ public sealed class PerforceIncrementalEventService(
             $"{reason}，已转为全量生成任务");
     }
 
-    private static bool IsDeletion(string action)
+    private bool EvaluatePath(
+        PerforceLogicalChange change,
+        string? workspaceRelativePath,
+        string? depotPath,
+        bool isOldPath,
+        IRepositoryFileSelectionPolicy? selectionPolicy,
+        PerforceFilterOptions filterOptions)
     {
-        return action.Equals("delete", StringComparison.OrdinalIgnoreCase)
-               || action.Equals("move/delete", StringComparison.OrdinalIgnoreCase);
+        if (workspaceRelativePath is null || depotPath is null)
+        {
+            return false;
+        }
+
+        if (selectionPolicy is not null)
+        {
+            var scopeDecision = selectionPolicy.EvaluateChangeTrigger(
+                workspaceRelativePath,
+                new SourceFileMetadata
+                {
+                    DepotPath = depotPath,
+                    FileType = change.FileType,
+                    IsTracked = true
+                });
+            if (!scopeDecision.Accepted)
+            {
+                logger.LogDebug(
+                    "Perforce change path scope-filtered. CL: {Changelist}, Path: {Path}, Side: {Side}, Reason: {Reason}",
+                    change.Changelist,
+                    workspaceRelativePath,
+                    isOldPath ? "old" : "new",
+                    scopeDecision.ReasonCode);
+            }
+
+            return scopeDecision.Accepted;
+        }
+
+        var action = change.Action.Equals("move", StringComparison.OrdinalIgnoreCase)
+            ? isOldPath ? "move/delete" : "move/add"
+            : change.Action;
+        var decision = filterPipeline.EvaluateFile(
+            new PerforceFileChange(
+                change.Changelist,
+                depotPath,
+                workspaceRelativePath,
+                action,
+                change.FileType),
+            filterOptions);
+        if (!decision.Included)
+        {
+            logger.LogDebug(
+                "Perforce change path filtered. CL: {Changelist}, Path: {Path}, Side: {Side}, Reason: {Reason}",
+                change.Changelist,
+                workspaceRelativePath,
+                isOldPath ? "old" : "new",
+                decision.Reason);
+        }
+
+        return decision.Included;
+    }
+
+    private static bool IsActionIncluded(string action, PerforceFilterOptions options)
+    {
+        return options.IncludedActions.Count == 0
+               || options.IncludedActions.Any(included =>
+                   included.Equals(action, StringComparison.OrdinalIgnoreCase));
     }
 
     private static void ValidateFilterOptions(PerforceFilterOptions options)

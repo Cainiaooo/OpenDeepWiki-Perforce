@@ -1,6 +1,20 @@
 # WP5：增量维护、运维与质量门禁
 
+**状态**：进行中（T5.1 已落地：显式 ChangeTrigger filespec、多 Scope CL 去重、move old/new 配对与跨 Scope 判定；T5.2–T5.3、运维和质量门禁待实施）
+
 **目标**：让知识库能够长期由 Agent 维护，并且对漏更新、错误版本、预算截断和质量退化可发现、可恢复。
+
+## 0. 当前实现触点
+
+| 组件 | 路径 |
+|---|---|
+| ChangeTrigger → 显式 workspace filespec | `src/OpenDeepWiki/Services/Repositories/Perforce/PerforceFilespecBuilder.cs` |
+| 多 filespec 查询、CL 去重、move metadata | `src/OpenDeepWiki/Services/Repositories/Perforce/PerforceCliClient.cs` |
+| move action 配对与 old/new identity | `src/OpenDeepWiki/Services/Repositories/Perforce/PerforceChangeCollator.cs` |
+| 跨 Scope 判定与增量任务投递 | `src/OpenDeepWiki/Services/Repositories/Perforce/PerforceIncrementalEventService.cs` |
+| T5.1 回归测试 | `tests/OpenDeepWiki.Tests/Services/Repositories/PerforceCliClientTests.cs`、`PerforceChangeCollatorTests.cs`、`PerforceIncrementalEventServiceTests.cs` |
+
+T5.1 只把受 Scope 接受的端点投递给现有增量生成任务，同时在事件响应中保留完整 move old/new path。source/fact → page/domain 的持久化依赖和影响计划属于 T5.2–T5.3，不能把当前路径级结果描述为已经完成页面级最小重建。
 
 ## 1. Perforce 增量范围对齐
 
@@ -49,7 +63,7 @@
 - 重试复用已经成功且输入摘要一致的领域/页面产物。
 - 配置或 workspace 在执行中变化时停止发布，后续任务从新的完整身份重新开始。
 - 提供同步完成 → 发送事件 → 等待发布 → 允许下一次同步的外部 runbook。
-- 【待决策】变更获取的调度模型：当前实现为外部事件注入，候选方向是服务端固定间隔轮询区间拉取。两种模式对“空 CL 推进基线”、幂等键复用和 runbook 编排的语义不同，WP5 开工前必须定案并全文统一。
+- 变更获取采用**外部事件注入**：同步编排方在工作区 sync 完成后提交目标 CL，服务端校验 `#have` 并拉取 `(LastCommitId, targetCL]`。本期不增加服务端 P4 定时轮询；空 CL 仍通过显式基线任务在成功消费后推进，失败时不推进。
 - 保留管理员强制全量、领域重建、页面重建和回滚发布版本的能力。
 
 ## 4. 可观测性
@@ -157,4 +171,3 @@ git status --short
 - 增量入口：`src/OpenDeepWiki/Services/Repositories/IncrementalUpdateService.cs` 与 `IncrementalUpdateWorker.cs`；基线字段 `RepositoryBranch.LastCommitId`（40 字符上限，兼容 P4 数字 CL）。
 - P4 事件注入：`Services/Repositories/Perforce/PerforceIncrementalEventService.cs`、`Endpoints/IncrementalUpdateEndpoints.cs`。
 - P4 变更过滤：`Services/Repositories/Perforce/PerforceFilterPipeline.cs`，按 T5.1 收口至 `IRepositoryFileSelectionPolicy`。
-

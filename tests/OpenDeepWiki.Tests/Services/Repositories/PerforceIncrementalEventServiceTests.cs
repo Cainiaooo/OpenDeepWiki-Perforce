@@ -6,6 +6,7 @@ using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Services.Repositories;
 using OpenDeepWiki.Services.Repositories.Perforce;
+using OpenDeepWiki.Services.Repositories.Scope;
 using Xunit;
 
 namespace OpenDeepWiki.Tests.Services.Repositories;
@@ -327,6 +328,76 @@ public class PerforceIncrementalEventServiceTests
         fixture.Incremental.VerifyAll();
     }
 
+    [Fact]
+    public async Task TriggerAsync_CrossScopeMoveRetainsBothEndpointsAndQueuesAcceptedSide()
+    {
+        await using var fixture = CreateFixture("100");
+        var configuration = CreateSourceScopeConfiguration();
+        var expectedFilespec = Path.Combine(fixture.Workspace, "Source", "...");
+        fixture.Scope
+            .Setup(service => service.GetResolvedCurrentAsync(
+                fixture.Repository.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(configuration);
+        fixture.Scope
+            .Setup(service => service.GetPolicyAsync(
+                fixture.Repository.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RepositoryFileSelectionPolicyFactory().Create(
+                configuration,
+                fixture.Workspace));
+        SetupHave(fixture, 101);
+        fixture.Perforce.Setup(client => client.GetChangelistsAsync(
+                fixture.Workspace,
+                100,
+                101,
+                501,
+                It.Is<IReadOnlyList<string>>(filespecs => filespecs.SequenceEqual(new[] { expectedFilespec })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new PerforceChangelist(101, "alice", "move out of scope")]);
+        fixture.Perforce.Setup(client => client.GetFileChangesAsync(
+                fixture.Workspace,
+                101,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new PerforceFileChange(
+                    101,
+                    "//depot/Game/Source/Old.cpp",
+                    "Source/Old.cpp",
+                    "move/delete",
+                    "text",
+                    "//depot/Game/Shared/New.cpp",
+                    "Shared/New.cpp"),
+                new PerforceFileChange(
+                    101,
+                    "//depot/Game/Shared/New.cpp",
+                    "Shared/New.cpp",
+                    "move/add",
+                    "text",
+                    "//depot/Game/Source/Old.cpp",
+                    "Source/Old.cpp")
+            ]);
+        fixture.Incremental.Setup(service => service.TriggerExternalUpdateAsync(
+                fixture.Repository.Id,
+                fixture.Branch.Id,
+                "101",
+                It.Is<IReadOnlyList<string>>(files => files.Count == 0),
+                It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Old.cpp" })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync("move-task");
+
+        var result = await fixture.Service.TriggerAsync(
+            fixture.Repository.Id,
+            fixture.Branch.Id,
+            "101");
+
+        var move = Assert.Single(result.Changes!);
+        Assert.Equal("Source/Old.cpp", move.OldWorkspaceRelativePath);
+        Assert.Equal("Shared/New.cpp", move.NewWorkspaceRelativePath);
+        Assert.Equal(1, result.IncludedFiles);
+        fixture.Incremental.VerifyAll();
+    }
+
     private static void SetupHave(Fixture fixture, long haveCl)
     {
         fixture.Perforce.Setup(client => client.GetLatestChangelistAsync(
@@ -337,6 +408,37 @@ public class PerforceIncrementalEventServiceTests
     private static PerforceFileChange Change(long cl, string path, string action, string fileType)
     {
         return new PerforceFileChange(cl, $"//depot/Game/{path}", path, action, fileType);
+    }
+
+    private static ResolvedScopeConfiguration CreateSourceScopeConfiguration()
+    {
+        return new ResolvedScopeConfiguration
+        {
+            SchemaVersion = 1,
+            WorkspaceContentPolicy = WorkspaceContentPolicy.SubmittedHaveOnly,
+            DocumentScopes =
+            [
+                new ResolvedDocumentScope
+                {
+                    Id = "source",
+                    Root = "Source",
+                    IncludedPathGlobs = ["**"],
+                    ExcludedPathGlobs = [],
+                    IncludedSuffixes = [".cpp"],
+                    AcceptAllTextFiles = false
+                }
+            ],
+            ContextScope = null,
+            ChangeTriggerScope = new ResolvedChangeTriggerScope
+            {
+                InheritsDocumentScopes = true,
+                AdditionalRoots = [],
+                IncludedPathGlobs = ["**"],
+                ExcludedPathGlobs = []
+            },
+            ContentHash = "scope-hash",
+            NormalizedJson = "{}"
+        };
     }
 
     private static Fixture CreateFixture(string? baseline, Action<PerforceOptions>? configure = null)
@@ -376,7 +478,7 @@ public class PerforceIncrementalEventServiceTests
         var pipeline = new ChangelistFilterPipeline(
             [new ChangelistUserFilter(), new ChangelistDescriptionFilter()],
             [new FileActionFilter(), new FilePathFilter(), new FileContentTypeFilter()]);
-        var scopeService = new Mock<OpenDeepWiki.Services.Repositories.Scope.IScopeConfigurationService>();
+        var scopeService = new Mock<IScopeConfigurationService>();
         scopeService
             .Setup(s => s.GetResolvedCurrentAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((OpenDeepWiki.Services.Repositories.Scope.ResolvedScopeConfiguration?)null);
@@ -398,6 +500,7 @@ public class PerforceIncrementalEventServiceTests
             p4,
             incremental,
             fullGeneration,
+            scopeService,
             service);
     }
 
@@ -409,6 +512,7 @@ public class PerforceIncrementalEventServiceTests
         Mock<IPerforceClient> perforce,
         Mock<IIncrementalUpdateService> incremental,
         Mock<IBranchGenerationTaskService> fullGeneration,
+        Mock<IScopeConfigurationService> scope,
         PerforceIncrementalEventService service) : IAsyncDisposable
     {
         public string Workspace { get; } = workspace;
@@ -418,6 +522,7 @@ public class PerforceIncrementalEventServiceTests
         public Mock<IPerforceClient> Perforce { get; } = perforce;
         public Mock<IIncrementalUpdateService> Incremental { get; } = incremental;
         public Mock<IBranchGenerationTaskService> FullGeneration { get; } = fullGeneration;
+        public Mock<IScopeConfigurationService> Scope { get; } = scope;
         public PerforceIncrementalEventService Service { get; } = service;
 
         public async ValueTask DisposeAsync()

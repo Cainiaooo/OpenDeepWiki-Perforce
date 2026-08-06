@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
 using OpenDeepWiki.Services.Repositories.Perforce;
+using OpenDeepWiki.Services.Repositories.Scope;
 using Xunit;
 
 namespace OpenDeepWiki.Tests.Services.Repositories;
@@ -144,7 +145,8 @@ public class PerforceCliClientTests
             var runner = new Mock<IPerforceCommandRunner>(MockBehavior.Strict);
             runner.Setup(command => command.RunTaggedAsync(
                     workspace.FullName,
-                    It.Is<IReadOnlyList<string>>(args => args.Contains("...@101,@103")),
+                    It.Is<IReadOnlyList<string>>(args => args.Any(arg =>
+                        arg.EndsWith($"{Path.DirectorySeparatorChar}...@101,@103", StringComparison.Ordinal))),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PerforceCommandResult(0, """
                     ... change 103
@@ -163,6 +165,145 @@ public class PerforceCliClientTests
         {
             workspace.Delete(recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task GetChangelistsAsync_UsesAllExplicitFilespecsAndDeduplicatesChanges()
+    {
+        var workspace = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"odw-p4-{Guid.NewGuid():N}"));
+        try
+        {
+            var sourceFilespec = Path.Combine(workspace.FullName, "SampleProject", "Source", "...");
+            var pluginFilespec = Path.Combine(workspace.FullName, "SampleProject", "Plugins", "...");
+            var runner = new Mock<IPerforceCommandRunner>(MockBehavior.Strict);
+            runner.Setup(command => command.RunTaggedAsync(
+                    workspace.FullName,
+                    It.Is<IReadOnlyList<string>>(args =>
+                        args.Contains(sourceFilespec + "@101,@103")
+                        && args.Contains(pluginFilespec + "@101,@103")),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PerforceCommandResult(0, """
+                    ... change 103
+                    ... user alice
+                    ... desc source result
+                    ... change 103
+                    ... user alice
+                    ... desc duplicated plugin result
+                    """, string.Empty));
+
+            var changes = await CreateClient(runner.Object).GetChangelistsAsync(
+                workspace.FullName,
+                100,
+                103,
+                501,
+                [sourceFilespec, pluginFilespec]);
+
+            var change = Assert.Single(changes);
+            Assert.Equal(103, change.Number);
+        }
+        finally
+        {
+            workspace.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GetFileChangesAsync_RetainsMappedMoveEndpoints()
+    {
+        var workspace = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"odw-p4-{Guid.NewGuid():N}"));
+        try
+        {
+            var runner = new Mock<IPerforceCommandRunner>(MockBehavior.Strict);
+            runner.Setup(command => command.RunTaggedAsync(
+                    workspace.FullName,
+                    It.Is<IReadOnlyList<string>>(args => args[0] == "describe"),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PerforceCommandResult(0, """
+                    ... change 200
+                    ... depotFile0 //depot/Game/Source/Old.cpp
+                    ... action0 move/delete
+                    ... type0 text
+                    ... depotFile1 //depot/Game/Shared/New.cpp
+                    ... action1 move/add
+                    ... type1 text
+                    """, string.Empty));
+            runner.Setup(command => command.RunTaggedAsync(
+                    workspace.FullName,
+                    It.Is<IReadOnlyList<string>>(args => args[0] == "fstat"),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PerforceCommandResult(0, """
+                    ... depotFile //depot/Game/Source/Old.cpp
+                    ... movedFile //depot/Game/Shared/New.cpp
+                    ... depotFile //depot/Game/Shared/New.cpp
+                    ... movedFile //depot/Game/Source/Old.cpp
+                    """, string.Empty));
+            runner.Setup(command => command.RunTaggedAsync(
+                    workspace.FullName,
+                    It.Is<IReadOnlyList<string>>(args => args[0] == "where"),
+                    It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new PerforceCommandResult(0, $"""
+                    ... depotFile //depot/Game/Source/Old.cpp
+                    ... path {Path.Combine(workspace.FullName, "Source", "Old.cpp")}
+                    ... depotFile //depot/Game/Shared/New.cpp
+                    ... path {Path.Combine(workspace.FullName, "Shared", "New.cpp")}
+                    """, string.Empty));
+
+            var files = await CreateClient(runner.Object).GetFileChangesAsync(workspace.FullName, 200);
+
+            Assert.Equal(2, files.Count);
+            Assert.All(files, file => Assert.NotNull(file.MovedWorkspaceRelativePath));
+            Assert.Contains(files, file =>
+                file.WorkspaceRelativePath == "Source/Old.cpp"
+                && file.MovedWorkspaceRelativePath == "Shared/New.cpp");
+        }
+        finally
+        {
+            workspace.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public void BuildChangeTriggerFilespecs_UsesDocumentAndAdditionalRoots()
+    {
+        var workspace = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "ExampleWorkspace"));
+        var configuration = new ResolvedScopeConfiguration
+        {
+            SchemaVersion = 1,
+            WorkspaceContentPolicy = WorkspaceContentPolicy.SubmittedHaveOnly,
+            DocumentScopes =
+            [
+                new ResolvedDocumentScope
+                {
+                    Id = "source",
+                    Root = "SampleProject/Source",
+                    IncludedPathGlobs = ["**"],
+                    ExcludedPathGlobs = [],
+                    IncludedSuffixes = [".cpp"],
+                    AcceptAllTextFiles = false
+                }
+            ],
+            ContextScope = null,
+            ChangeTriggerScope = new ResolvedChangeTriggerScope
+            {
+                InheritsDocumentScopes = true,
+                AdditionalRoots = ["Shared/Config"],
+                IncludedPathGlobs = ["**"],
+                ExcludedPathGlobs = []
+            },
+            ContentHash = "scope-hash",
+            NormalizedJson = "{}"
+        };
+
+        var filespecs = PerforceFilespecBuilder.BuildChangeTriggerFilespecs(workspace, configuration);
+
+        Assert.Equal(2, filespecs.Count);
+        Assert.All(filespecs, filespec => Assert.True(Path.IsPathRooted(filespec)));
+        Assert.Contains(filespecs, filespec => filespec.EndsWith(
+            Path.Combine("SampleProject", "Source", "..."),
+            StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(filespecs, filespec => filespec.EndsWith(
+            Path.Combine("Shared", "Config", "..."),
+            StringComparison.OrdinalIgnoreCase));
     }
 
     private static PerforceCliClient CreateClient(IPerforceCommandRunner runner)

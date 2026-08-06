@@ -16,6 +16,22 @@ public sealed record PerforceFileChange(
     string DepotPath,
     string WorkspaceRelativePath,
     string Action,
+    string FileType,
+    string? MovedDepotPath = null,
+    string? MovedWorkspaceRelativePath = null);
+
+/// <summary>
+/// A source-level change after move/add and move/delete records have been paired.
+/// Old/new paths are both retained so cross-scope moves can be assessed without
+/// depending on the destination file still existing.
+/// </summary>
+public sealed record PerforceLogicalChange(
+    long Changelist,
+    string Action,
+    string? OldDepotPath,
+    string? NewDepotPath,
+    string? OldWorkspaceRelativePath,
+    string? NewWorkspaceRelativePath,
     string FileType);
 
 /// <summary>
