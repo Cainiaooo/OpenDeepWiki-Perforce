@@ -382,9 +382,14 @@ public class IncrementalUpdateServiceTests
         await context.SaveChangesAsync();
 
         var service = CreateService(context);
+        const string impactPlanJson = "{\"schemaVersion\":1}";
 
         var first = await service.TriggerExternalUpdateAsync(
-            repository.Id, branch.Id, "1010", new[] { "Source/Foo.cpp" });
+            repository.Id,
+            branch.Id,
+            "1010",
+            new[] { "Source/Foo.cpp" },
+            impactPlanJson: impactPlanJson);
         var second = await service.TriggerExternalUpdateAsync(
             repository.Id, branch.Id, "1010", new[] { "Source/Foo.cpp", "Source/Baz.cpp" });
 
@@ -396,6 +401,7 @@ public class IncrementalUpdateServiceTests
         Assert.Equal(IncrementalUpdateStatus.Pending, task.Status);
         Assert.False(task.IsManualTrigger);
         Assert.Contains("Source/Foo.cpp", task.ExternalChangedFiles);
+        Assert.Equal(impactPlanJson, task.ImpactPlanJson);
     }
 
     [Fact]

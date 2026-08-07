@@ -17,9 +17,28 @@ public sealed class PerforceCliClient(
         string workspaceRoot,
         CancellationToken cancellationToken = default)
     {
+        return await GetLatestChangelistAsync(
+            workspaceRoot,
+            PerforceFilespecBuilder.BuildChangeTriggerFilespecs(workspaceRoot, null),
+            cancellationToken);
+    }
+
+    public async Task<long?> GetLatestChangelistAsync(
+        string workspaceRoot,
+        IReadOnlyList<string> filespecs,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedFilespecs = ValidateFilespecs(filespecs);
+        if (normalizedFilespecs.Count == 0)
+        {
+            return null;
+        }
+
+        var arguments = new List<string> { "changes", "-m", "1", "-s", "submitted" };
+        arguments.AddRange(normalizedFilespecs.Select(filespec => $"{filespec}#have"));
         var result = await commandRunner.RunTaggedAsync(
             workspaceRoot,
-            ["changes", "-m", "1", "-s", "submitted", "...#have"],
+            arguments,
             cancellationToken);
 
         EnsureSuccess(result, "query latest changelist");
@@ -33,22 +52,66 @@ public sealed class PerforceCliClient(
         int maxResults,
         CancellationToken cancellationToken = default)
     {
+        return await GetChangelistsAsync(
+            workspaceRoot,
+            afterChangelist,
+            throughChangelist,
+            maxResults,
+            PerforceFilespecBuilder.BuildChangeTriggerFilespecs(workspaceRoot, null),
+            cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PerforceChangelist>> GetChangelistsAsync(
+        string workspaceRoot,
+        long afterChangelist,
+        long throughChangelist,
+        int maxResults,
+        IReadOnlyList<string> filespecs,
+        CancellationToken cancellationToken = default)
+    {
         if (afterChangelist < 0 || throughChangelist <= 0 || throughChangelist <= afterChangelist)
         {
             return [];
         }
 
-        var result = await commandRunner.RunTaggedAsync(
-            workspaceRoot,
-            [
-                "changes", "-s", "submitted", "-L", "-m", Math.Max(1, maxResults).ToString(CultureInfo.InvariantCulture),
-                $"...@{checked(afterChangelist + 1).ToString(CultureInfo.InvariantCulture)},@{throughChangelist.ToString(CultureInfo.InvariantCulture)}"
-            ],
-            cancellationToken);
+        var normalizedFilespecs = ValidateFilespecs(filespecs);
+        if (normalizedFilespecs.Count == 0)
+        {
+            return [];
+        }
 
-        EnsureSuccess(result, $"query changelist range ({afterChangelist}, {throughChangelist}]");
-        return ParseChangelists(result.StandardOutput)
-            .Where(change => change.Number > afterChangelist && change.Number <= throughChangelist)
+        // Query each filespec separately with its own -m budget, then merge.
+        // A single multi-filespec changes call can burn the -m quota on duplicate
+        // CLs that hit multiple roots, under-counting unique CLs and weakening the
+        // MaxChangelists full-generation safety valve.
+        var limit = Math.Max(1, maxResults);
+        var range = $"@{checked(afterChangelist + 1).ToString(CultureInfo.InvariantCulture)},@{throughChangelist.ToString(CultureInfo.InvariantCulture)}";
+        var byNumber = new Dictionary<long, PerforceChangelist>();
+
+        foreach (var filespec in normalizedFilespecs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var arguments = new List<string>
+            {
+                "changes", "-s", "submitted", "-L", "-m",
+                limit.ToString(CultureInfo.InvariantCulture),
+                filespec + range
+            };
+            var result = await commandRunner.RunTaggedAsync(
+                workspaceRoot,
+                arguments,
+                cancellationToken);
+
+            EnsureSuccess(result, $"query changelist range ({afterChangelist}, {throughChangelist}] for {filespec}");
+            foreach (var change in ParseChangelists(result.StandardOutput)
+                         .Where(change => change.Number > afterChangelist && change.Number <= throughChangelist))
+            {
+                byNumber.TryAdd(change.Number, change);
+            }
+        }
+
+        return byNumber.Values
             .OrderBy(change => change.Number)
             .ToArray();
     }
@@ -75,9 +138,18 @@ public sealed class PerforceCliClient(
             return [];
         }
 
+        var movedDepotPaths = await GetMovedDepotPathsAsync(
+            workspaceRoot,
+            changelist,
+            describedFiles,
+            cancellationToken);
+        var pathsToMap = describedFiles.Select(file => file.DepotPath)
+            .Concat(movedDepotPaths.Values)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
         var mappedPaths = await MapWorkspacePathsAsync(
             workspaceRoot,
-            describedFiles.Select(file => file.DepotPath).ToArray(),
+            pathsToMap,
             cancellationToken);
 
         var changes = new List<PerforceFileChange>(describedFiles.Count);
@@ -91,15 +163,35 @@ public sealed class PerforceCliClient(
                 continue;
             }
 
+            movedDepotPaths.TryGetValue(file.DepotPath, out var movedDepotPath);
+            string? movedRelativePath = null;
+            if (movedDepotPath is not null)
+            {
+                if (!mappedPaths.TryGetValue(movedDepotPath, out movedRelativePath))
+                {
+                    // Partner may live outside the client view (cross-view move). Keep the
+                    // depot-level movedFile so collator can still emit a one-sided logical
+                    // move; do not fail the whole changelist and drop unrelated file edits.
+                    logger.LogWarning(
+                        "Moved partner path is outside or unmapped from workspace; keeping depot metadata only. Changelist: {Changelist}, DepotPath: {DepotPath}, MovedDepotPath: {MovedDepotPath}",
+                        changelist, file.DepotPath, movedDepotPath);
+                }
+            }
+
             changes.Add(new PerforceFileChange(
                 changelist,
                 file.DepotPath,
                 relativePath,
                 file.Action,
-                file.FileType));
+                file.FileType,
+                movedDepotPath,
+                movedRelativePath));
         }
 
-        return changes;
+        return changes
+            .GroupBy(change => new { change.Changelist, change.DepotPath, change.Action })
+            .Select(group => group.First())
+            .ToArray();
     }
 
     internal static IReadOnlyList<PerforceChangelist> ParseChangelists(string output)
@@ -299,6 +391,103 @@ public sealed class PerforceCliClient(
 
         Flush();
         return mappings;
+    }
+
+    internal static IReadOnlyDictionary<string, string> ParseMovedFiles(string output)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? depotPath = null;
+        string? movedFile = null;
+
+        void Flush()
+        {
+            if (!string.IsNullOrWhiteSpace(depotPath) && !string.IsNullOrWhiteSpace(movedFile))
+            {
+                result[depotPath] = movedFile;
+            }
+        }
+
+        foreach (var (key, value) in ParseTaggedFields(output))
+        {
+            if (key.Equals("depotFile", StringComparison.Ordinal))
+            {
+                Flush();
+                depotPath = value;
+                movedFile = null;
+            }
+            else if (key.Equals("movedFile", StringComparison.Ordinal))
+            {
+                movedFile = value;
+            }
+        }
+
+        Flush();
+        return result;
+    }
+
+    private async Task<IReadOnlyDictionary<string, string>> GetMovedDepotPathsAsync(
+        string workspaceRoot,
+        long changelist,
+        IReadOnlyList<DescribedFile> describedFiles,
+        CancellationToken cancellationToken)
+    {
+        var movedFiles = describedFiles
+            .Where(file => file.Action.Equals("move/add", StringComparison.OrdinalIgnoreCase)
+                           || file.Action.Equals("move/delete", StringComparison.OrdinalIgnoreCase))
+            .Select(file => file.DepotPath)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (movedFiles.Length == 0)
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        var arguments = new List<string>
+        {
+            "fstat", "-e", changelist.ToString(CultureInfo.InvariantCulture),
+            "-T", "depotFile,movedFile"
+        };
+        arguments.AddRange(movedFiles.Select(path =>
+            $"{PerforceFilespecBuilder.EscapeLiteralPath(path)}@{changelist.ToString(CultureInfo.InvariantCulture)}"));
+
+        var result = await commandRunner.RunTaggedAsync(workspaceRoot, arguments, cancellationToken);
+        EnsureSuccess(result, $"query move metadata for changelist {changelist}");
+
+        var movedPaths = ParseMovedFiles(result.StandardOutput);
+        var missing = movedFiles.Where(path => !movedPaths.ContainsKey(path)).ToArray();
+        if (missing.Length > 0)
+        {
+            throw new PerforceCommandException(
+                $"Move metadata was missing for changelist {changelist}: {string.Join(", ", missing)}");
+        }
+
+        return movedPaths;
+    }
+
+    private static IReadOnlyList<string> ValidateFilespecs(IReadOnlyList<string> filespecs)
+    {
+        ArgumentNullException.ThrowIfNull(filespecs);
+
+        var result = new List<string>(filespecs.Count);
+        foreach (var rawFilespec in filespecs)
+        {
+            if (string.IsNullOrWhiteSpace(rawFilespec))
+            {
+                throw new ArgumentException("Perforce filespec must not be empty.", nameof(filespecs));
+            }
+
+            var filespec = rawFilespec.Trim();
+            if (!Path.IsPathRooted(filespec) && !filespec.StartsWith("//", StringComparison.Ordinal))
+            {
+                throw new ArgumentException(
+                    $"Perforce filespec must be an explicit workspace or depot path: {filespec}",
+                    nameof(filespecs));
+            }
+
+            result.Add(filespec);
+        }
+
+        return result;
     }
 
     private static bool TryMakeRelativePath(string workspaceRoot, string localPath, out string relativePath)

@@ -47,6 +47,14 @@ public class DocCatalog : AggregateRoot<string>
     public string? DocFileId { get; set; }
 
     /// <summary>
+    /// Wiki 发布世代 ID。空字符串表示无 generation 隔离的遗留正文。
+    /// 与 BranchLanguageId+Path 组成唯一键，使 staging 与已发布正文可并存。
+    /// </summary>
+    [Required]
+    [StringLength(36)]
+    public string GenerationId { get; set; } = string.Empty;
+
+    /// <summary>
     /// 父目录导航属性
     /// </summary>
     [ForeignKey("ParentId")]

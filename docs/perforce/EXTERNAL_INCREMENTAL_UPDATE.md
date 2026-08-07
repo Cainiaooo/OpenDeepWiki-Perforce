@@ -1,8 +1,11 @@
 # Perforce 增量更新
 
-让 OpenDeepWiki 在 Perforce 工作区上做增量文档更新。实现遵循仓库根目录的
-`Perforce增量改造方案.md`——采用「外部注入变更文件列表」路线：OpenDeepWiki 内部不做
+让 OpenDeepWiki 在 Perforce 工作区上做增量文档更新。实现遵循本目录的
+[`Perforce增量改造方案.md`](Perforce增量改造方案.md)——采用「外部注入变更文件列表」路线：OpenDeepWiki 内部不做
 p4 交互，由外部脚本采集 Perforce 变更并通过 API 注入。
+
+fork 的上游同步、长期特性分支维护和提交验证流程见
+[`FORK_DEVELOPMENT_WORKFLOW.md`](FORK_DEVELOPMENT_WORKFLOW.md)。
 
 ## 一、注册 Perforce 源
 
@@ -13,8 +16,8 @@ Perforce 工作区以本地目录形式挂载（建议配 `LocalDirectoryImportM
 POST /api/v1/repositories/submit-perforce
 {
   "orgName": "neon",
-  "repoName": "NeonGame",
-  "workspaceRootPath": "D:/p4/NeonGame",   // p4 client root（须在 AllowedLocalPathRoots 内）
+  "repoName": "SampleProject",
+  "workspaceRootPath": "D:/p4/ExampleWorkspace",   // p4 client root（须在 AllowedLocalPathRoots 内）
   "branchName": "main",
   "languageCode": "zh"
 }
@@ -29,8 +32,8 @@ POST /api/v1/repositories/submit-perforce
 POST /api/v1/repositories/{repositoryId}/branches/{branchId}/incremental-update/external
 {
   "targetRevision": "1234567",                              // Perforce changelist 号
-  "changedFiles": ["Source/NeonGame/Foo.cpp", "Script/Abilities/Bar.as"],
-  "deletedFiles": ["Source/NeonGame/Old.cpp"]               // 可选，当前引擎暂不处理删除
+  "changedFiles": ["SampleProject/Source/Foo.cpp", "SampleProject/Script/Bar.as"],
+  "deletedFiles": ["SampleProject/Source/Old.cpp"]               // 可选，当前引擎暂不处理删除
 }
 ```
 
@@ -50,7 +53,7 @@ POST /api/v1/repositories/{repositoryId}/branches/{branchId}/incremental-update/
 
 ## 三、外部采集脚本
 
-`inject-perforce-changes.ps1` 是模板：读取上次处理的 changelist → `p4 sync` → 取当前 changelist →
+[`inject-perforce-changes.ps1`](../../scripts/perforce/inject-perforce-changes.ps1) 是模板：读取上次处理的 changelist → `p4 sync` → 取当前 changelist →
 解析变更文件（depot 路径经 `p4 where` 转工作区相对路径，按 `Source/`、`Script/` 圈定，排除
 `Content/`、`Intermediate/` 等）→ 注入上面的端点 → **轮询任务至 `Completed` 后**再推进本地状态文件。
 
@@ -59,7 +62,7 @@ POST /api/v1/repositories/{repositoryId}/branches/{branchId}/incremental-update/
   -ApiBaseUrl http://localhost:5085 `
   -ApiToken <owner-or-admin-jwt> `
   -RepositoryId <repoId> -BranchId <branchId> `
-  -DepotPath //depot/NeonGame/...
+  -DepotPath //depot/SampleProject/...
 ```
 
 关键：脚本**只有在增量任务真正 `Completed` 后**才把状态文件推进到当前 changelist；任务 `Failed`/

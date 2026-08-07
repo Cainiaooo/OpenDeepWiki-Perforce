@@ -1,0 +1,11 @@
+{
+  "primaryAssets": [
+    {
+      "stableId": "PrimaryAsset:SampleItem:Item_Potion",
+      "assetType": "SampleItem",
+      "name": "Item_Potion",
+      "bundle": "Items",
+      "explicitDependencies": []
+    }
+  ]
+}

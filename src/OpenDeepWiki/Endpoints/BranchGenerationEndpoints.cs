@@ -4,6 +4,7 @@ using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Services.Auth;
 using OpenDeepWiki.Services.Repositories;
+using OpenDeepWiki.Services.Repositories.Impact;
 
 namespace OpenDeepWiki.Endpoints;
 
@@ -194,6 +195,7 @@ public sealed record BranchGenerationTaskResponse(
     string? ErrorMessage,
     string? RequestedBy,
     string? TargetCommitId,
+    IncrementalImpactPlan? ImpactPlan,
     DateTime CreatedAt,
     DateTime? StartedAt,
     DateTime? CompletedAt)
@@ -215,6 +217,7 @@ public sealed record BranchGenerationTaskResponse(
             task.ErrorMessage,
             task.RequestedBy,
             task.TargetCommitId,
+            IncrementalImpactPlanSerializer.Deserialize(task.ImpactPlanJson),
             task.CreatedAt,
             task.StartedAt,
             task.CompletedAt);

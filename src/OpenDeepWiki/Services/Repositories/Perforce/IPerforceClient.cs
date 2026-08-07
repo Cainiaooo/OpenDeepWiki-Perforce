@@ -9,11 +9,24 @@ public interface IPerforceClient
         string workspaceRoot,
         CancellationToken cancellationToken = default);
 
+    Task<long?> GetLatestChangelistAsync(
+        string workspaceRoot,
+        IReadOnlyList<string> filespecs,
+        CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<PerforceChangelist>> GetChangelistsAsync(
         string workspaceRoot,
         long afterChangelist,
         long throughChangelist,
         int maxResults,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<PerforceChangelist>> GetChangelistsAsync(
+        string workspaceRoot,
+        long afterChangelist,
+        long throughChangelist,
+        int maxResults,
+        IReadOnlyList<string> filespecs,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<PerforceFileChange>> GetFileChangesAsync(

@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Services.Repositories;
 
@@ -20,9 +21,11 @@ public partial class RepositorySkillMarkdownBuilder : IRepositorySkillMarkdownBu
         BranchLanguage language,
         CancellationToken cancellationToken = default)
     {
-        var catalogs = await context.DocCatalogs
-            .AsNoTracking()
-            .Where(catalog => catalog.BranchLanguageId == language.Id && !catalog.IsDeleted)
+        var publishedGenerationId = await WikiPublicationQuery.GetPublishedGenerationIdAsync(
+            context, language.Id, cancellationToken);
+
+        var catalogs = await WikiPublicationQuery
+            .FilterVisibleCatalogs(context.DocCatalogs.AsNoTracking(), language.Id, publishedGenerationId)
             .Include(catalog => catalog.DocFile)
             .OrderBy(catalog => catalog.Order)
             .ToListAsync(cancellationToken);

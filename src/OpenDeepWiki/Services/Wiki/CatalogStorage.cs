@@ -2,18 +2,22 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Services.Wiki;
 
 /// <summary>
 /// Provides storage operations for wiki catalog structures.
-/// Interacts with the DocCatalog database entity.
+/// When <paramref name="generationId"/> is set (or WikiGenerationContext has a staging id),
+/// reads/writes are isolated to that generation so readers only see published content.
 /// </summary>
 public class CatalogStorage
 {
     private readonly IContext _context;
     private readonly string _branchLanguageId;
-    
+    private readonly string _generationId;
+    private readonly bool _isStagingWriter;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -25,33 +29,36 @@ public class CatalogStorage
     /// </summary>
     /// <param name="context">The database context.</param>
     /// <param name="branchLanguageId">The branch language ID to operate on.</param>
-    public CatalogStorage(IContext context, string branchLanguageId)
+    /// <param name="generationId">
+    /// Optional generation scope. When null, uses <see cref="WikiGenerationContext.CurrentGenerationId"/>
+    /// if present; otherwise legacy empty generation for writers, or published generation for pure reads
+    /// is resolved per operation when needed.
+    /// </param>
+    public CatalogStorage(IContext context, string branchLanguageId, string? generationId = null)
     {
         _context = context ?? throw new ArgumentNullException(nameof(context));
         _branchLanguageId = branchLanguageId ?? throw new ArgumentNullException(nameof(branchLanguageId));
+
+        var resolved = generationId ?? WikiGenerationContext.CurrentGenerationId;
+        if (!string.IsNullOrEmpty(resolved))
+        {
+            _generationId = resolved;
+            _isStagingWriter = true;
+        }
+        else
+        {
+            _generationId = WikiPublicationQuery.LegacyGenerationId;
+            _isStagingWriter = false;
+        }
     }
 
-    /// <summary>
-    /// Gets the current catalog structure as JSON.
-    /// </summary>
-    /// <returns>JSON string representing the catalog structure.</returns>
     public async Task<string> GetCatalogJsonAsync(CancellationToken cancellationToken = default)
     {
-        var catalogs = await _context.DocCatalogs
-            .Where(c => c.BranchLanguageId == _branchLanguageId && !c.IsDeleted)
-            .OrderBy(c => c.Order)
-            .ToListAsync(cancellationToken);
-
+        var catalogs = await LoadVisibleCatalogsAsync(cancellationToken);
         var root = BuildCatalogTree(catalogs);
         return JsonSerializer.Serialize(root, JsonOptions);
     }
 
-    /// <summary>
-    /// Sets the complete catalog structure from JSON.
-    /// Replaces all existing catalog items for the branch language.
-    /// </summary>
-    /// <param name="catalogJson">JSON string representing the catalog structure.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task SetCatalogAsync(string catalogJson, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(catalogJson))
@@ -65,13 +72,13 @@ public class CatalogStorage
             throw new ArgumentException("Invalid catalog JSON format.", nameof(catalogJson));
         }
 
-        // Mark existing catalogs as deleted
+        // Only touch the active write generation — never soft-delete the published tree mid-staging.
         var existingCatalogs = await _context.DocCatalogs
-            .Where(c => c.BranchLanguageId == _branchLanguageId && !c.IsDeleted)
+            .Where(c => c.BranchLanguageId == _branchLanguageId
+                        && c.GenerationId == _generationId
+                        && !c.IsDeleted)
             .ToListAsync(cancellationToken);
 
-        // Refuse a destructive replacement: a populated catalog must not shrink drastically.
-        // A partial-view agent run must use EditCatalog instead of rewriting everything.
         static int CountItems(List<CatalogItem> items) => items.Sum(i => 1 + CountItems(i.Children));
         var newCount = CountItems(root.Items);
         if (existingCatalogs.Count >= 10 && newCount < existingCatalogs.Count / 2)
@@ -85,17 +92,10 @@ public class CatalogStorage
             catalog.MarkAsDeleted();
         }
 
-        // Create new catalog items
         await CreateCatalogItemsAsync(root.Items, null, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Updates a specific node in the catalog structure.
-    /// </summary>
-    /// <param name="path">The path of the node to update.</param>
-    /// <param name="nodeJson">JSON string representing the updated node data.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
     public async Task UpdateNodeAsync(string path, string nodeJson, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -114,17 +114,12 @@ public class CatalogStorage
             throw new ArgumentException("Invalid node JSON format.", nameof(nodeJson));
         }
 
-        var existingCatalog = await _context.DocCatalogs
-            .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId && 
-                                      c.Path == path && 
-                                      !c.IsDeleted, cancellationToken);
-
+        var existingCatalog = await FindInWriteGenerationAsync(path, cancellationToken);
         if (existingCatalog == null)
         {
             throw new InvalidOperationException($"Catalog node with path '{path}' not found.");
         }
 
-        // Update the existing catalog
         existingCatalog.Title = updatedItem.Title;
         existingCatalog.Order = updatedItem.Order;
         if (updatedItem.Children.Count > 0)
@@ -133,12 +128,12 @@ public class CatalogStorage
         }
         existingCatalog.UpdateTimestamp();
 
-        // Handle children updates if provided
         if (updatedItem.Children.Count > 0)
         {
-            // Mark existing children as deleted
             var existingChildren = await _context.DocCatalogs
-                .Where(c => c.ParentId == existingCatalog.Id && !c.IsDeleted)
+                .Where(c => c.ParentId == existingCatalog.Id
+                            && c.GenerationId == _generationId
+                            && !c.IsDeleted)
                 .ToListAsync(cancellationToken);
 
             foreach (var child in existingChildren)
@@ -146,49 +141,58 @@ public class CatalogStorage
                 child.MarkAsDeleted();
             }
 
-            // Create new children
             await CreateCatalogItemsAsync(updatedItem.Children, existingCatalog.Id, cancellationToken);
         }
 
         await _context.SaveChangesAsync(cancellationToken);
     }
 
-    /// <summary>
-    /// Gets a specific catalog node by path.
-    /// </summary>
-    /// <param name="path">The path of the node to retrieve.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>The catalog item or null if not found.</returns>
     public async Task<CatalogItem?> GetNodeAsync(string path, CancellationToken cancellationToken = default)
     {
-        var catalog = await _context.DocCatalogs
-            .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId && 
-                                      c.Path == path && 
-                                      !c.IsDeleted, cancellationToken);
-
+        var allCatalogs = await LoadVisibleCatalogsAsync(cancellationToken);
+        var catalog = allCatalogs.FirstOrDefault(c => c.Path == path);
         if (catalog == null)
         {
             return null;
         }
 
-        // Get all descendants
-        var allCatalogs = await _context.DocCatalogs
-            .Where(c => c.BranchLanguageId == _branchLanguageId && !c.IsDeleted)
-            .OrderBy(c => c.Order)
-            .ToListAsync(cancellationToken);
-
         return BuildCatalogItemWithChildren(catalog, allCatalogs);
     }
 
-    /// <summary>
-    /// Builds the catalog tree structure from flat list of DocCatalog entities.
-    /// </summary>
+    private async Task<List<DocCatalog>> LoadVisibleCatalogsAsync(CancellationToken cancellationToken)
+    {
+        if (_isStagingWriter)
+        {
+            return await _context.DocCatalogs
+                .Where(c => c.BranchLanguageId == _branchLanguageId
+                            && c.GenerationId == _generationId
+                            && !c.IsDeleted)
+                .OrderBy(c => c.Order)
+                .ToListAsync(cancellationToken);
+        }
+
+        var publishedGenerationId = await WikiPublicationQuery.GetPublishedGenerationIdAsync(
+            _context, _branchLanguageId, cancellationToken);
+
+        return await WikiPublicationQuery
+            .FilterVisibleCatalogs(_context.DocCatalogs.AsQueryable(), _branchLanguageId, publishedGenerationId)
+            .OrderBy(c => c.Order)
+            .ToListAsync(cancellationToken);
+    }
+
+    private Task<DocCatalog?> FindInWriteGenerationAsync(string path, CancellationToken cancellationToken)
+    {
+        return _context.DocCatalogs.FirstOrDefaultAsync(
+            c => c.BranchLanguageId == _branchLanguageId
+                 && c.Path == path
+                 && c.GenerationId == _generationId
+                 && !c.IsDeleted,
+            cancellationToken);
+    }
+
     private CatalogRoot BuildCatalogTree(List<DocCatalog> catalogs)
     {
         var root = new CatalogRoot();
-        var catalogDict = catalogs.ToDictionary(c => c.Id);
-
-        // Find root items (no parent)
         var rootItems = catalogs.Where(c => c.ParentId == null).OrderBy(c => c.Order);
 
         foreach (var item in rootItems)
@@ -199,9 +203,6 @@ public class CatalogStorage
         return root;
     }
 
-    /// <summary>
-    /// Recursively builds a CatalogItem with its children.
-    /// </summary>
     private CatalogItem BuildCatalogItemWithChildren(DocCatalog catalog, List<DocCatalog> allCatalogs)
     {
         var item = new CatalogItem
@@ -224,27 +225,24 @@ public class CatalogStorage
         return item;
     }
 
-    /// <summary>
-    /// Recursively creates or updates DocCatalog entities from CatalogItems.
-    /// Handles existing records (including soft-deleted ones) to avoid unique constraint violations.
-    /// </summary>
     private async Task CreateCatalogItemsAsync(List<CatalogItem> items, string? parentId, CancellationToken cancellationToken)
     {
         foreach (var item in items)
         {
-            // Check if a record with the same path exists (including soft-deleted)
             var existingCatalog = await _context.DocCatalogs
-                .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId &&
-                                          c.Path == item.Path, cancellationToken);
+                .FirstOrDefaultAsync(c => c.BranchLanguageId == _branchLanguageId
+                                          && c.Path == item.Path
+                                          && c.GenerationId == _generationId,
+                    cancellationToken);
 
             string catalogId;
             if (existingCatalog != null)
             {
-                // Reuse existing record - update it instead of creating new
                 existingCatalog.ParentId = parentId;
                 existingCatalog.Title = item.Title;
                 existingCatalog.Order = item.Order;
                 existingCatalog.IsDeleted = false;
+                existingCatalog.GenerationId = _generationId;
                 if (item.Children.Count > 0)
                 {
                     existingCatalog.DocFileId = null;
@@ -254,7 +252,6 @@ public class CatalogStorage
             }
             else
             {
-                // Create new record
                 var catalog = new DocCatalog
                 {
                     Id = Guid.NewGuid().ToString(),
@@ -262,7 +259,8 @@ public class CatalogStorage
                     ParentId = parentId,
                     Title = item.Title,
                     Path = item.Path,
-                    Order = item.Order
+                    Order = item.Order,
+                    GenerationId = _generationId
                 };
 
                 _context.DocCatalogs.Add(catalog);

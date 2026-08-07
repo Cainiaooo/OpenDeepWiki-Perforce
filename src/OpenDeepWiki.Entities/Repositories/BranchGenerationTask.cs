@@ -49,6 +49,11 @@ public class BranchGenerationTask : AggregateRoot<string>
     [StringLength(40)]
     public string? TargetCommitId { get; set; }
 
+    /// <summary>
+    /// 触发本次全量任务的增量影响计划 JSON；手动全量任务可为空。
+    /// </summary>
+    public string? ImpactPlanJson { get; set; }
+
     [ForeignKey("RepositoryId")]
     public virtual Repository? Repository { get; set; }
 

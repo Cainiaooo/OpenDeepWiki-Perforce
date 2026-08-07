@@ -4,6 +4,7 @@ using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Services.Auth;
 using OpenDeepWiki.Services.Repositories;
+using OpenDeepWiki.Services.Repositories.Impact;
 using OpenDeepWiki.Services.Repositories.Perforce;
 
 namespace OpenDeepWiki.Endpoints;
@@ -118,6 +119,14 @@ public static class IncrementalUpdateEndpoints
                 IncludedChangelists = result.IncludedChangelists,
                 InspectedFiles = result.InspectedFiles,
                 IncludedFiles = result.IncludedFiles,
+                Changes = result.Changes?.Select(change => new PerforceLogicalChangeResponse
+                {
+                    Changelist = change.Changelist.ToString(),
+                    Action = change.Action,
+                    OldPath = change.OldWorkspaceRelativePath,
+                    NewPath = change.NewWorkspaceRelativePath
+                }).ToList() ?? [],
+                ImpactPlan = result.ImpactPlan,
                 Message = result.Message
             });
         }
@@ -378,7 +387,7 @@ public static class IncrementalUpdateEndpoints
                 request.TargetRevision,
                 request.ChangedFiles,
                 request.DeletedFiles,
-                cancellationToken);
+                cancellationToken: cancellationToken);
 
             var task = await context.IncrementalUpdateTasks
                 .FirstOrDefaultAsync(t => t.Id == taskId, cancellationToken);
@@ -543,7 +552,8 @@ public static class IncrementalUpdateEndpoints
                 ErrorMessage = task.ErrorMessage,
                 CreatedAt = task.CreatedAt,
                 StartedAt = task.StartedAt,
-                CompletedAt = task.CompletedAt
+                CompletedAt = task.CompletedAt,
+                ImpactPlan = IncrementalImpactPlanSerializer.Deserialize(task.ImpactPlanJson)
             });
         }
         catch (Exception ex)
@@ -717,7 +727,17 @@ public sealed class PerforceIncrementalEventResponse
     public int IncludedChangelists { get; set; }
     public int InspectedFiles { get; set; }
     public int IncludedFiles { get; set; }
+    public List<PerforceLogicalChangeResponse> Changes { get; set; } = [];
+    public IncrementalImpactPlan? ImpactPlan { get; set; }
     public string Message { get; set; } = string.Empty;
+}
+
+public sealed class PerforceLogicalChangeResponse
+{
+    public string Changelist { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty;
+    public string? OldPath { get; set; }
+    public string? NewPath { get; set; }
 }
 
 /// <summary>
@@ -804,6 +824,9 @@ public class IncrementalUpdateTaskResponse
     /// 完成时间
     /// </summary>
     public DateTime? CompletedAt { get; set; }
+
+    /// <summary>T5.2 可解释影响计划。</summary>
+    public IncrementalImpactPlan? ImpactPlan { get; set; }
 }
 
 /// <summary>

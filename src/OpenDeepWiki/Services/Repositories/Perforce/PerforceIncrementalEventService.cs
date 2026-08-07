@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Impact;
+using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Services.Repositories.Perforce;
 
@@ -25,7 +27,9 @@ public sealed record PerforceIncrementalEventResult(
     int IncludedChangelists,
     int InspectedFiles,
     int IncludedFiles,
-    string Message);
+    string Message,
+    IReadOnlyList<PerforceLogicalChange>? Changes = null,
+    IncrementalImpactPlan? ImpactPlan = null);
 
 public interface IPerforceIncrementalEventService
 {
@@ -45,6 +49,8 @@ public sealed class PerforceIncrementalEventService(
     IChangelistFilterPipeline filterPipeline,
     IIncrementalUpdateService incrementalUpdateService,
     IBranchGenerationTaskService branchGenerationTaskService,
+    IScopeConfigurationService scopeConfigurationService,
+    IIncrementalImpactAnalyzer impactAnalyzer,
     IOptionsMonitor<PerforceOptions> optionsMonitor,
     ILogger<PerforceIncrementalEventService> logger) : IPerforceIncrementalEventService
 {
@@ -77,7 +83,12 @@ public sealed class PerforceIncrementalEventService(
             throw new DirectoryNotFoundException($"Perforce 工作区不存在: {workspaceRoot}");
         }
 
-        var targetCl = await ResolveTargetChangelistAsync(workspaceRoot, latestChangelist, cancellationToken);
+        var scopeConfig = await scopeConfigurationService.GetResolvedCurrentAsync(repositoryId, cancellationToken);
+        var changeFilespecs = PerforceFilespecBuilder.BuildChangeTriggerFilespecs(workspaceRoot, scopeConfig);
+        var targetCl = await ResolveTargetChangelistAsync(
+            workspaceRoot,
+            latestChangelist,
+            cancellationToken);
         if (!targetCl.HasValue)
         {
             return new PerforceIncrementalEventResult(
@@ -104,6 +115,7 @@ public sealed class PerforceIncrementalEventService(
                 branchId,
                 targetCl.Value.ToString(CultureInfo.InvariantCulture),
                 [],
+                impactPlanJson: IncrementalImpactPlanSerializer.Serialize(IncrementalImpactPlan.None()),
                 cancellationToken: cancellationToken);
 
             logger.LogInformation(
@@ -118,7 +130,8 @@ public sealed class PerforceIncrementalEventService(
                 0,
                 0,
                 0,
-                "已创建数字型 changelist 基线任务");
+                "已创建数字型 changelist 基线任务",
+                ImpactPlan: IncrementalImpactPlan.None());
         }
 
         if (targetCl.Value <= baseCl)
@@ -197,15 +210,40 @@ public sealed class PerforceIncrementalEventService(
 
         // Interval discovery still runs on the request path. Cap work via MaxChangelists/MaxFiles
         // and honor cancellation between CLs so reverse proxies can cancel hung scans.
-        var changelists = await perforceClient.GetChangelistsAsync(
-            workspaceRoot,
-            baseCl,
-            targetCl.Value,
-            checked(filterOptions.MaxChangelists + 1),
-            cancellationToken);
+        // Empty ChangeTrigger filespecs under a non-null scope config means a misconfigured
+        // ChangeTriggerScope (e.g. InheritsDocumentScopes=false and AdditionalRoots=[]).
+        // Fail closed so we never silently skip the interval and advance the baseline.
+        if (scopeConfig is not null && changeFilespecs.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "ChangeTriggerScope 未解析出任何 filespec（请检查 InheritsDocumentScopes / DocumentScopes / AdditionalRoots）。拒绝静默漏更。");
+        }
+
+        IReadOnlyList<PerforceChangelist> changelists;
+        if (scopeConfig is null)
+        {
+            changelists = await perforceClient.GetChangelistsAsync(
+                workspaceRoot,
+                baseCl,
+                targetCl.Value,
+                checked(filterOptions.MaxChangelists + 1),
+                cancellationToken);
+        }
+        else
+        {
+            changelists = await perforceClient.GetChangelistsAsync(
+                workspaceRoot,
+                baseCl,
+                targetCl.Value,
+                checked(filterOptions.MaxChangelists + 1),
+                changeFilespecs,
+                cancellationToken);
+        }
 
         if (changelists.Count > filterOptions.MaxChangelists)
         {
+            var impactPlan = IncrementalImpactPlan.Full(
+                IncrementalImpactReasonCodes.ChangelistThresholdExceeded);
             return await QueueFullGenerationAsync(
                 repositoryId,
                 branchId,
@@ -213,7 +251,9 @@ public sealed class PerforceIncrementalEventService(
                 changelists.Count,
                 0,
                 0,
+                0,
                 $"changelist 数 {changelists.Count} 超过阈值 {filterOptions.MaxChangelists}",
+                impactPlan,
                 cancellationToken);
         }
 
@@ -222,8 +262,15 @@ public sealed class PerforceIncrementalEventService(
             : StringComparer.OrdinalIgnoreCase;
         var changedFiles = new HashSet<string>(comparer);
         var deletedFiles = new HashSet<string>(comparer);
+        var includedChanges = new List<PerforceLogicalChange>();
         var includedChangelists = 0;
         var inspectedFiles = 0;
+
+        // Scope 配置存在时，文件级路径/后缀判定统一委托 IRepositoryFileSelectionPolicy；
+        // 无 Scope 时保持 phase-two 过滤管线兼容行为。
+        var selectionPolicy = scopeConfig is null
+            ? null
+            : await scopeConfigurationService.GetPolicyAsync(repositoryId, cancellationToken);
 
         foreach (var changelist in changelists)
         {
@@ -242,36 +289,71 @@ public sealed class PerforceIncrementalEventService(
                 workspaceRoot,
                 changelist.Number,
                 cancellationToken);
+            inspectedFiles += fileChanges.Count;
+            var actionFilteredFiles = fileChanges
+                .Where(file => IsActionIncluded(file.Action, filterOptions))
+                .ToArray();
+            var logicalChanges = PerforceChangeCollator.Collate(actionFilteredFiles, comparer);
             var includedAnyFile = false;
 
-            foreach (var file in fileChanges)
+            foreach (var change in logicalChanges)
             {
-                inspectedFiles++;
-                var fileDecision = filterPipeline.EvaluateFile(file, filterOptions);
-                if (!fileDecision.Included)
+                var oldIncluded = EvaluatePath(
+                    change,
+                    change.OldWorkspaceRelativePath,
+                    change.OldDepotPath,
+                    isOldPath: true,
+                    selectionPolicy,
+                    filterOptions);
+                var newIncluded = EvaluatePath(
+                    change,
+                    change.NewWorkspaceRelativePath,
+                    change.NewDepotPath,
+                    isOldPath: false,
+                    selectionPolicy,
+                    filterOptions);
+
+                if (!oldIncluded && !newIncluded)
                 {
-                    logger.LogDebug(
-                        "Perforce file filtered. CL: {Changelist}, Path: {Path}, Reason: {Reason}",
-                        changelist.Number, file.WorkspaceRelativePath, fileDecision.Reason);
                     continue;
                 }
 
                 includedAnyFile = true;
-                // Last action in the ordered CL walk wins for a given relative path.
-                if (IsDeletion(file.Action))
+                includedChanges.Add(change);
+
+                if (oldIncluded && change.OldWorkspaceRelativePath is not null)
                 {
-                    changedFiles.Remove(file.WorkspaceRelativePath);
-                    deletedFiles.Add(file.WorkspaceRelativePath);
-                }
-                else
-                {
-                    deletedFiles.Remove(file.WorkspaceRelativePath);
-                    changedFiles.Add(file.WorkspaceRelativePath);
+                    changedFiles.Remove(change.OldWorkspaceRelativePath);
+                    deletedFiles.Add(change.OldWorkspaceRelativePath);
                 }
 
-                var uniqueFileCount = changedFiles.Count + deletedFiles.Count;
+                if (newIncluded && change.NewWorkspaceRelativePath is not null)
+                {
+                    var isCaseOnlyMove = change.Action.Equals("move", StringComparison.OrdinalIgnoreCase)
+                                         && change.OldWorkspaceRelativePath is not null
+                                         && comparer.Equals(
+                                             change.OldWorkspaceRelativePath,
+                                             change.NewWorkspaceRelativePath)
+                                         && !StringComparer.Ordinal.Equals(
+                                             change.OldWorkspaceRelativePath,
+                                             change.NewWorkspaceRelativePath);
+                    if (!isCaseOnlyMove)
+                    {
+                        deletedFiles.Remove(change.NewWorkspaceRelativePath);
+                    }
+
+                    changedFiles.Add(change.NewWorkspaceRelativePath);
+                }
+
+                // Case-only moves may keep both casings in changed+deleted sets so the
+                // payload preserves both path forms. Count logical files with the path
+                // comparer so MaxFiles is not tripped twice for one rename.
+                var uniqueFileCount = CountUniqueLogicalFiles(changedFiles, deletedFiles, comparer);
                 if (uniqueFileCount > filterOptions.MaxFiles)
                 {
+                    var impactPlan = IncrementalImpactPlan.Full(
+                        IncrementalImpactReasonCodes.FileThresholdExceeded,
+                        changedFiles.Concat(deletedFiles));
                     return await QueueFullGenerationAsync(
                         repositoryId,
                         branchId,
@@ -279,7 +361,9 @@ public sealed class PerforceIncrementalEventService(
                         changelists.Count,
                         includedChangelists + 1,
                         inspectedFiles,
+                        uniqueFileCount,
                         $"过滤后文件数超过阈值 {filterOptions.MaxFiles}",
+                        impactPlan,
                         cancellationToken);
                 }
             }
@@ -290,19 +374,52 @@ public sealed class PerforceIncrementalEventService(
             }
         }
 
+        var impactPlanResult = await impactAnalyzer.AnalyzeAsync(
+            new IncrementalImpactRequest
+            {
+                RepositoryId = repositoryId,
+                BranchId = branchId,
+                Changes = includedChanges.Select(change => new IncrementalSourceChange(
+                    change.Action,
+                    change.OldWorkspaceRelativePath,
+                    change.NewWorkspaceRelativePath,
+                    change.FileType)).ToArray(),
+                SelectionPolicy = selectionPolicy,
+                CaseSensitivePaths = filterOptions.CaseSensitivePaths
+            },
+            cancellationToken);
+
+        if (impactPlanResult.RequiresFullGeneration)
+        {
+            return await QueueFullGenerationAsync(
+                repositoryId,
+                branchId,
+                targetCl.Value,
+                changelists.Count,
+                includedChangelists,
+                inspectedFiles,
+                changedFiles.Count + deletedFiles.Count,
+                $"影响分析升级为 {impactPlanResult.ExecutionLevel} ({string.Join(", ", impactPlanResult.ReasonCodes)})",
+                impactPlanResult,
+                cancellationToken);
+        }
+
+        var impactPlanJson = IncrementalImpactPlanSerializer.Serialize(impactPlanResult);
         var task = await incrementalUpdateService.TriggerExternalUpdateAsync(
             repositoryId,
             branchId,
             targetRevision,
             changedFiles.Order(comparer).ToArray(),
             deletedFiles.Order(comparer).ToArray(),
-            cancellationToken);
+            cancellationToken: cancellationToken,
+            impactPlanJson: impactPlanJson);
 
         var includedFileCount = changedFiles.Count + deletedFiles.Count;
         logger.LogInformation(
-            "Perforce interval filtered and queued. RepositoryId: {RepositoryId}, BranchId: {BranchId}, BaseCL: {BaseCL}, TargetCL: {TargetCL}, TotalCLs: {TotalCLs}, IncludedCLs: {IncludedCLs}, InspectedFiles: {InspectedFiles}, IncludedFiles: {IncludedFiles}, TaskId: {TaskId}",
+            "Perforce interval filtered and queued. RepositoryId: {RepositoryId}, BranchId: {BranchId}, BaseCL: {BaseCL}, TargetCL: {TargetCL}, TotalCLs: {TotalCLs}, IncludedCLs: {IncludedCLs}, InspectedFiles: {InspectedFiles}, IncludedFiles: {IncludedFiles}, RequestedImpact: {RequestedImpact}, ExecutionImpact: {ExecutionImpact}, ImpactReasons: {ImpactReasons}, TaskId: {TaskId}",
             repositoryId, branchId, baseCl, targetCl.Value, changelists.Count, includedChangelists,
-            inspectedFiles, includedFileCount, task);
+            inspectedFiles, includedFileCount, impactPlanResult.RequestedLevel, impactPlanResult.ExecutionLevel,
+            impactPlanResult.ReasonCodes, task);
 
         return new PerforceIncrementalEventResult(
             PerforceIncrementalEventAction.IncrementalQueued,
@@ -314,7 +431,9 @@ public sealed class PerforceIncrementalEventService(
             includedFileCount,
             includedFileCount == 0
                 ? "区间内变更均被过滤，已创建基线推进任务"
-                : "已创建 Perforce 增量更新任务");
+                : "已创建 Perforce 增量更新任务",
+            includedChanges,
+            impactPlanResult);
     }
 
     private async Task<long?> ResolveTargetChangelistAsync(
@@ -322,7 +441,9 @@ public sealed class PerforceIncrementalEventService(
         string? latestChangelist,
         CancellationToken cancellationToken)
     {
-        // Always resolve workspace #have so client-supplied values cannot advance the baseline past reality.
+        // Validate against the explicit full-workspace #have filespec. A scoped filespec can
+        // legitimately have no revisions at the requested target CL and must not reject an
+        // otherwise synchronized empty interval.
         var haveCl = await perforceClient.GetLatestChangelistAsync(workspaceRoot, cancellationToken);
         if (!haveCl.HasValue || haveCl.Value <= 0)
         {
@@ -405,7 +526,9 @@ public sealed class PerforceIncrementalEventService(
         int totalChangelists,
         int includedChangelists,
         int inspectedFiles,
+        int includedFiles,
         string reason,
+        IncrementalImpactPlan impactPlan,
         CancellationToken cancellationToken)
     {
         var targetRevision = targetCl.ToString(CultureInfo.InvariantCulture);
@@ -415,6 +538,7 @@ public sealed class PerforceIncrementalEventService(
             requestedBy: null,
             priority: 100,
             targetCommitId: targetRevision,
+            impactPlanJson: IncrementalImpactPlanSerializer.Serialize(impactPlan),
             cancellationToken: cancellationToken);
         if (!result.Success || result.Task == null)
         {
@@ -423,8 +547,9 @@ public sealed class PerforceIncrementalEventService(
         }
 
         logger.LogWarning(
-            "Perforce interval switched to full generation. RepositoryId: {RepositoryId}, BranchId: {BranchId}, TargetCL: {TargetCL}, Reason: {Reason}, TaskId: {TaskId}",
-            repositoryId, branchId, targetCl, reason, result.Task.Id);
+            "Perforce interval switched to full generation. RepositoryId: {RepositoryId}, BranchId: {BranchId}, TargetCL: {TargetCL}, RequestedImpact: {RequestedImpact}, ExecutionImpact: {ExecutionImpact}, ImpactReasons: {ImpactReasons}, Reason: {Reason}, TaskId: {TaskId}",
+            repositoryId, branchId, targetCl, impactPlan.RequestedLevel, impactPlan.ExecutionLevel,
+            impactPlan.ReasonCodes, reason, result.Task.Id);
 
         return new PerforceIncrementalEventResult(
             PerforceIncrementalEventAction.FullGenerationQueued,
@@ -433,14 +558,95 @@ public sealed class PerforceIncrementalEventService(
             totalChangelists,
             includedChangelists,
             inspectedFiles,
-            0,
-            $"{reason}，已转为全量生成任务");
+            includedFiles,
+            $"{reason}，已转为全量生成任务",
+            ImpactPlan: impactPlan);
     }
 
-    private static bool IsDeletion(string action)
+    private bool EvaluatePath(
+        PerforceLogicalChange change,
+        string? workspaceRelativePath,
+        string? depotPath,
+        bool isOldPath,
+        IRepositoryFileSelectionPolicy? selectionPolicy,
+        PerforceFilterOptions filterOptions)
     {
-        return action.Equals("delete", StringComparison.OrdinalIgnoreCase)
-               || action.Equals("move/delete", StringComparison.OrdinalIgnoreCase);
+        if (workspaceRelativePath is null || depotPath is null)
+        {
+            return false;
+        }
+
+        if (selectionPolicy is not null)
+        {
+            var scopeDecision = selectionPolicy.EvaluateChangeTrigger(
+                workspaceRelativePath,
+                new SourceFileMetadata
+                {
+                    DepotPath = depotPath,
+                    FileType = change.FileType,
+                    IsTracked = true
+                });
+            if (!scopeDecision.Accepted)
+            {
+                logger.LogDebug(
+                    "Perforce change path scope-filtered. CL: {Changelist}, Path: {Path}, Side: {Side}, Reason: {Reason}",
+                    change.Changelist,
+                    workspaceRelativePath,
+                    isOldPath ? "old" : "new",
+                    scopeDecision.ReasonCode);
+            }
+
+            return scopeDecision.Accepted;
+        }
+
+        var action = change.Action.Equals("move", StringComparison.OrdinalIgnoreCase)
+            ? isOldPath ? "move/delete" : "move/add"
+            : change.Action;
+        var decision = filterPipeline.EvaluateFile(
+            new PerforceFileChange(
+                change.Changelist,
+                depotPath,
+                workspaceRelativePath,
+                action,
+                change.FileType),
+            filterOptions);
+        if (!decision.Included)
+        {
+            logger.LogDebug(
+                "Perforce change path filtered. CL: {Changelist}, Path: {Path}, Side: {Side}, Reason: {Reason}",
+                change.Changelist,
+                workspaceRelativePath,
+                isOldPath ? "old" : "new",
+                decision.Reason);
+        }
+
+        return decision.Included;
+    }
+
+    private static bool IsActionIncluded(string action, PerforceFilterOptions options)
+    {
+        return options.IncludedActions.Count == 0
+               || options.IncludedActions.Any(included =>
+                   included.Equals(action, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static int CountUniqueLogicalFiles(
+        IEnumerable<string> changedFiles,
+        IEnumerable<string> deletedFiles,
+        StringComparer comparer)
+    {
+        var unique = new HashSet<string>(comparer);
+        foreach (var path in changedFiles)
+        {
+            unique.Add(path);
+        }
+
+        foreach (var path in deletedFiles)
+        {
+            unique.Add(path);
+        }
+
+        return unique.Count;
     }
 
     private static void ValidateFilterOptions(PerforceFilterOptions options)

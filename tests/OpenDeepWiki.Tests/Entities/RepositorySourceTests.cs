@@ -8,7 +8,7 @@ public class RepositorySourceTests
     [Fact]
     public void EncodePerforcePath_RoundTripsThroughParse()
     {
-        const string workspaceRoot = "/data/p4/NeonGame";
+        const string workspaceRoot = "/data/p4/SampleProject";
 
         var stored = RepositorySource.EncodePerforcePath(workspaceRoot);
         var parsed = RepositorySource.Parse(stored);

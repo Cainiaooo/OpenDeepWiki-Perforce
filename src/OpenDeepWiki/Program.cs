@@ -21,10 +21,15 @@ using OpenDeepWiki.Services.OAuth;
 using OpenDeepWiki.Services.Organizations;
 using OpenDeepWiki.Services.Prompts;
 using OpenDeepWiki.Services.Recommendation;
+using OpenDeepWiki.Services.Context;
+using OpenDeepWiki.Services.Generation;
 using OpenDeepWiki.Services.Repositories;
+using OpenDeepWiki.Services.Repositories.Impact;
 using OpenDeepWiki.Services.Repositories.Perforce;
+using OpenDeepWiki.Services.Repositories.Scope;
 using OpenDeepWiki.Services.Translation;
 using OpenDeepWiki.Services.Mcp;
+using OpenDeepWiki.Services.UeKnowledge;
 using OpenDeepWiki.Services.UserProfile;
 using OpenDeepWiki.Services.Wiki;
 using Scalar.AspNetCore;
@@ -190,6 +195,41 @@ try
     builder.Services.AddSingleton<IChangelistFilterPipeline, ChangelistFilterPipeline>();
     builder.Services.AddScoped<IPerforceIncrementalEventService, PerforceIncrementalEventService>();
 
+    // Perforce phase-three WP1: Scope, file selection, workspace lease, staging publication
+    builder.Services.AddSingleton<IScopeConfigurationValidator, ScopeConfigurationValidator>();
+    builder.Services.AddSingleton<IScopeConfigurationNormalizer, ScopeConfigurationNormalizer>();
+    builder.Services.AddSingleton<IRepositoryFileSelectionPolicyFactory, RepositoryFileSelectionPolicyFactory>();
+    builder.Services.AddSingleton<IWorkspaceManifestService, WorkspaceManifestService>();
+    builder.Services.AddScoped<IScopeConfigurationService, ScopeConfigurationService>();
+    builder.Services.AddScoped<ISourceWorkspaceLease, SourceWorkspaceLeaseService>();
+    builder.Services.AddScoped<IWikiGenerationService, WikiGenerationService>();
+
+    // Perforce phase-three WP2: generation engine boundary, inventory, planning, coverage audit
+    builder.Services.AddSingleton<ISourceInventoryBuilder, SourceInventoryBuilder>();
+    builder.Services.AddSingleton<IDomainTopicPlanner, DomainTopicPlanner>();
+    builder.Services.AddSingleton<ICatalogMerger, CatalogMerger>();
+    builder.Services.AddSingleton<ICoverageAuditor, CoverageAuditor>();
+    builder.Services.AddScoped<IIncrementalImpactAnalyzer, IncrementalImpactAnalyzer>();
+    builder.Services.AddScoped<IGenerationEngine, LegacyGenerationEngine>();
+    builder.Services.AddScoped<IGenerationEngine, HierarchicalGenerationEngine>();
+    builder.Services.AddScoped<IGenerationEngineRegistry>(sp =>
+    {
+        var engines = sp.GetServices<IGenerationEngine>();
+        return new GenerationEngineRegistry(engines, GenerationEngineIds.Legacy);
+    });
+
+    // Perforce phase-three WP3: UE Knowledge Package schema, validation, fact index
+    builder.Services.AddSingleton<IUeKnowledgePackageLoader, UeKnowledgePackageLoader>();
+    builder.Services.AddSingleton<IUeKnowledgeFactIndexBuilder, UeKnowledgeFactIndexBuilder>();
+    builder.Services.AddSingleton<IUeKnowledgePackageValidator, UeKnowledgePackageValidator>();
+    builder.Services.AddSingleton<IUeKnowledgeSemanticDiff, UeKnowledgeSemanticDiff>();
+    builder.Services.AddSingleton<IUeKnowledgeMcpContractChecker, UeKnowledgeMcpContractChecker>();
+    builder.Services.AddScoped<IUeKnowledgePackageService, UeKnowledgePackageService>();
+
+    // Perforce phase-three WP4: task-oriented context assembly for AI CR / editor / onboarding
+    builder.Services.AddScoped<IWikiSnapshotResolver, WikiSnapshotResolver>();
+    builder.Services.AddScoped<IContextAssemblyService, ContextAssemblyService>();
+
     // Configure Graphify artifact generation
     builder.Services.AddOptions<GraphifyOptions>()
         .Bind(builder.Configuration.GetSection("Graphify"));
@@ -316,6 +356,7 @@ try
     // 注册 MCP 提供商管理服务
     builder.Services.AddScoped<IAdminMcpProviderService, AdminMcpProviderService>();
     builder.Services.AddScoped<IMcpUsageLogService, McpUsageLogService>();
+    builder.Services.AddScoped<IMcpUserResolver, McpUserResolver>();
     builder.Services.AddHostedService<McpStatisticsAggregationService>();
 
     // MCP server registration (official MCP server + scope via ConfigureSessionOptions)
@@ -361,7 +402,8 @@ try
                 };
             })
             .WithTools<McpGlobalTools>()
-            .WithTools<McpRepositoryTools>();
+            .WithTools<McpRepositoryTools>()
+            .WithTools<McpContextTools>();
     }
 
     var app = builder.Build();
@@ -420,6 +462,9 @@ try
     app.MapSystemEndpoints();
     app.MapIncrementalUpdateEndpoints();
     app.MapBranchGenerationEndpoints();
+    app.MapScopeConfigurationEndpoints();
+    app.MapUeKnowledgeEndpoints();
+    app.MapContextEndpoints();
     app.MapMcpProviderEndpoints();
 
     // 初始化数据库（创建默认数据）

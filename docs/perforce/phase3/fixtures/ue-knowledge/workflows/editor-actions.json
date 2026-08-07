@@ -1,0 +1,11 @@
+{
+  "editorActions": [
+    {
+      "stableId": "Action.ValidateSampleAssets",
+      "name": "Validate Sample Assets",
+      "category": "SampleProject",
+      "description": "Run project asset validation rules",
+      "preconditions": ["EditorWorldLoaded"]
+    }
+  ]
+}
