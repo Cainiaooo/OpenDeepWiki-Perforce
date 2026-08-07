@@ -41,10 +41,10 @@ public class PerforceIncrementalEventServiceTests
                 It.Is<IReadOnlyList<string>>(files =>
                     files.SequenceEqual(new[] { "Config/DefaultGame.ini", "Source/Game/Foo.cpp" })),
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
-                It.IsAny<CancellationToken>(),
                 It.Is<string?>(json =>
                     IncrementalImpactPlanSerializer.Deserialize(json)!.ExecutionLevel
-                    == IncrementalImpactLevel.LeafPages)))
+                    == IncrementalImpactLevel.LeafPages),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("incremental-task");
 
         var result = await fixture.Service.TriggerAsync(
@@ -104,10 +104,10 @@ public class PerforceIncrementalEventServiceTests
                 null,
                 100,
                 "101",
-                It.IsAny<CancellationToken>(),
                 It.Is<string?>(json =>
                     IncrementalImpactPlanSerializer.Deserialize(json)!.ReasonCodes.Contains(
-                        IncrementalImpactReasonCodes.StructuralFileChanged))))
+                        IncrementalImpactReasonCodes.StructuralFileChanged)),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BranchGenerationTaskResult(true, fullTask));
 
         var result = await fixture.Service.TriggerAsync(
@@ -140,8 +140,8 @@ public class PerforceIncrementalEventServiceTests
                 "101",
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("baseline-task");
 
         var result = await fixture.Service.TriggerAsync(
@@ -193,13 +193,21 @@ public class PerforceIncrementalEventServiceTests
     {
         await using var fixture = CreateFixture("100");
         SetupHave(fixture, 101);
+        var storedPlan = new IncrementalImpactPlan
+        {
+            RequestedLevel = IncrementalImpactLevel.LeafPages,
+            ExecutionLevel = IncrementalImpactLevel.LeafPages,
+            ReasonCodes = [IncrementalImpactReasonCodes.RecordedPageSourceChanged],
+            ChangedPaths = ["Source/Game/Foo.cpp"]
+        };
         fixture.Context.IncrementalUpdateTasks.Add(new IncrementalUpdateTask
         {
             Id = "active-task",
             RepositoryId = fixture.Repository.Id,
             BranchId = fixture.Branch.Id,
             Status = IncrementalUpdateStatus.Pending,
-            ExternalTargetRevision = "101"
+            ExternalTargetRevision = "101",
+            ImpactPlanJson = IncrementalImpactPlanSerializer.Serialize(storedPlan)
         });
         await fixture.Context.SaveChangesAsync();
 
@@ -210,9 +218,91 @@ public class PerforceIncrementalEventServiceTests
 
         Assert.Equal(PerforceIncrementalEventAction.AlreadyQueued, result.Action);
         Assert.Equal("active-task", result.TaskId);
+        Assert.NotNull(result.ImpactPlan);
+        Assert.Equal(IncrementalImpactLevel.LeafPages, result.ImpactPlan.ExecutionLevel);
+        Assert.Contains(IncrementalImpactReasonCodes.RecordedPageSourceChanged, result.ImpactPlan.ReasonCodes);
         fixture.Perforce.Verify(client => client.GetChangelistsAsync(
             It.IsAny<string>(), It.IsAny<long>(), It.IsAny<long>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
         fixture.Incremental.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task TriggerAsync_ScopeContentHashMismatchQueuesFullGeneration()
+    {
+        await using var fixture = CreateFixture("100");
+        var configuration = CreateSourceScopeConfiguration();
+        fixture.Scope
+            .Setup(service => service.GetResolvedCurrentAsync(
+                fixture.Repository.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(configuration);
+        fixture.Scope
+            .Setup(service => service.GetPolicyAsync(
+                fixture.Repository.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RepositoryFileSelectionPolicyFactory().Create(
+                configuration,
+                fixture.Workspace));
+        fixture.Context.WikiGenerations.Add(new WikiGeneration
+        {
+            Id = "gen-published",
+            RepositoryId = fixture.Repository.Id,
+            BranchId = fixture.Branch.Id,
+            BranchLanguageId = "lang-zh",
+            Status = WikiGenerationStatus.Published,
+            ScopeContentHash = "previous-scope-hash",
+            PublishedAt = DateTime.UtcNow.AddHours(-1)
+        });
+        await fixture.Context.SaveChangesAsync();
+        SetupHave(fixture, 101);
+        var expectedFilespec = Path.Combine(fixture.Workspace, "Source", "...");
+        fixture.Perforce.Setup(client => client.GetChangelistsAsync(
+                fixture.Workspace,
+                100,
+                101,
+                501,
+                It.Is<IReadOnlyList<string>>(filespecs => filespecs.SequenceEqual(new[] { expectedFilespec })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new PerforceChangelist(101, "alice", "scope drift")]);
+        fixture.Perforce.Setup(client => client.GetFileChangesAsync(
+                fixture.Workspace, 101, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Change(101, "Source/Game/Foo.cpp", "edit", "text")]);
+        fixture.Impact.Reset();
+        fixture.Impact.Setup(analyzer => analyzer.AnalyzeAsync(
+                It.Is<IncrementalImpactRequest>(request => request.ScopeConfigurationChanged),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(IncrementalImpactPlan.Full(IncrementalImpactReasonCodes.ScopeConfigurationChanged));
+        var fullTask = new BranchGenerationTask
+        {
+            Id = "scope-full-task",
+            RepositoryId = fixture.Repository.Id,
+            BranchId = fixture.Branch.Id,
+            TargetCommitId = "101"
+        };
+        fixture.FullGeneration.Setup(service => service.EnqueueFullGenerationAsync(
+                fixture.Repository.Id,
+                fixture.Branch.Id,
+                null,
+                100,
+                "101",
+                It.Is<string?>(json =>
+                    IncrementalImpactPlanSerializer.Deserialize(json)!.ReasonCodes.Contains(
+                        IncrementalImpactReasonCodes.ScopeConfigurationChanged)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BranchGenerationTaskResult(true, fullTask));
+
+        var result = await fixture.Service.TriggerAsync(
+            fixture.Repository.Id,
+            fixture.Branch.Id,
+            "101");
+
+        Assert.Equal(PerforceIncrementalEventAction.FullGenerationQueued, result.Action);
+        Assert.Contains(IncrementalImpactReasonCodes.ScopeConfigurationChanged, result.ImpactPlan!.ReasonCodes);
+        fixture.Impact.Verify(analyzer => analyzer.AnalyzeAsync(
+            It.Is<IncrementalImpactRequest>(request => request.ScopeConfigurationChanged),
+            It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Incremental.VerifyNoOtherCalls();
+        fixture.FullGeneration.VerifyAll();
     }
 
     [Fact]
@@ -226,8 +316,8 @@ public class PerforceIncrementalEventServiceTests
                 "200",
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
                 null,
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("initial-baseline-task");
 
         var result = await fixture.Service.TriggerAsync(
@@ -268,8 +358,8 @@ public class PerforceIncrementalEventServiceTests
                 null,
                 100,
                 "101",
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BranchGenerationTaskResult(true, fullTask));
 
         var result = await fixture.Service.TriggerAsync(
@@ -285,8 +375,8 @@ public class PerforceIncrementalEventServiceTests
             null,
             100,
             "101",
-            It.IsAny<CancellationToken>(),
-            It.IsAny<string?>()), Times.Once);
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
         fixture.Incremental.VerifyNoOtherCalls();
     }
 
@@ -314,8 +404,8 @@ public class PerforceIncrementalEventServiceTests
                 null,
                 100,
                 "103",
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BranchGenerationTaskResult(true, fullTask));
 
         var result = await fixture.Service.TriggerAsync(
@@ -352,8 +442,8 @@ public class PerforceIncrementalEventServiceTests
                 "102",
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
                 It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Game/Temp.cpp" })),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("delete-task");
 
         var result = await fixture.Service.TriggerAsync(
@@ -388,8 +478,8 @@ public class PerforceIncrementalEventServiceTests
                 "102",
                 It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Game/Temp.cpp" })),
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("readd-task");
 
         var result = await fixture.Service.TriggerAsync(
@@ -456,8 +546,8 @@ public class PerforceIncrementalEventServiceTests
                 "101",
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
                 It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Old.cpp" })),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("move-task");
 
         var result = await fixture.Service.TriggerAsync(
@@ -527,8 +617,8 @@ public class PerforceIncrementalEventServiceTests
                 "101",
                 It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/New.cpp" })),
                 It.Is<IReadOnlyList<string>>(files => files.Count == 0),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("move-in-task");
 
         var result = await fixture.Service.TriggerAsync(
@@ -630,8 +720,8 @@ public class PerforceIncrementalEventServiceTests
                 "101",
                 It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Game/Edit.cpp" })),
                 It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Old.cpp" })),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync("partial-move-task");
 
         var result = await fixture.Service.TriggerAsync(

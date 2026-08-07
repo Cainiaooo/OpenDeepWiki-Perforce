@@ -186,6 +186,12 @@ public class IncrementalImpactAnalyzerTests
                     "class:/Script/Game.Hero",
                     "page-hero",
                     "game/hero",
+                    "lang-zh"),
+                // CollectUeFactIds 还会把 ChangedKinds 编成 shard:*；全部 fact 必须可解析才允许 LeafPages
+                new IncrementalPageDependency(
+                    $"shard:{UeKnowledgeSchema.ShardKinds.Reflection}",
+                    "page-hero",
+                    "game/hero",
                     "lang-zh")
             ]
         });
@@ -211,6 +217,156 @@ public class IncrementalImpactAnalyzerTests
         Assert.Contains(IncrementalImpactReasonCodes.MissingUeFactDependency, plan.ReasonCodes);
         Assert.Contains(IncrementalImpactReasonCodes.PartialGenerationUnavailable, plan.ReasonCodes);
         Assert.True(plan.IsFailClosed);
+    }
+
+    [Fact]
+    public void AnalyzeUeKnowledge_PartialFactMatchDoesNotStayOnLeafPages()
+    {
+        using var context = CreateContext();
+        var analyzer = CreateAnalyzer(context);
+        var diff = new UeKnowledgeSemanticDiffResult
+        {
+            FromSemanticDigest = "old",
+            ToSemanticDigest = "new",
+            ChangedKinds = [UeKnowledgeSchema.ShardKinds.Reflection],
+            ChangedClassIds = ["/Script/Game.Hero", "/Script/Game.Enemy", "/Script/Game.Weapon"],
+            AffectedDomainHints = ["Game"]
+        };
+
+        var plan = analyzer.AnalyzeUeKnowledge(new UeKnowledgeImpactRequest
+        {
+            SemanticDiff = diff,
+            RecordedDependencies =
+            [
+                new IncrementalPageDependency(
+                    "class:/Script/Game.Hero",
+                    "page-hero",
+                    "game/hero",
+                    "lang-zh")
+            ]
+        });
+
+        Assert.Equal(IncrementalImpactLevel.DomainReplan, plan.RequestedLevel);
+        Assert.Equal(IncrementalImpactLevel.FullInventoryAndPlanning, plan.ExecutionLevel);
+        Assert.Contains(IncrementalImpactReasonCodes.UeFactDependencyChanged, plan.ReasonCodes);
+        Assert.Contains(IncrementalImpactReasonCodes.MissingUeFactDependency, plan.ReasonCodes);
+        Assert.Equal(["page-hero"], plan.AffectedPageIds);
+        Assert.True(plan.IsFailClosed);
+        Assert.False(plan.ExecutionLevel == IncrementalImpactLevel.LeafPages);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_OrphanDocFileWithoutCatalogIsSkippedNotForcedFull()
+    {
+        await using var context = CreateContext();
+        await SeedPublishedPageAsync(context, "Source/Game/Foo.cpp", sourceFilesJson: null);
+        // 孤儿 DocFile：有 SourceFiles 但没有 catalog，不应拖垮整条依赖图
+        context.DocFiles.Add(new DocFile
+        {
+            Id = "orphan-doc",
+            BranchLanguageId = "lang-zh",
+            GenerationId = "generation-current",
+            Content = "orphan",
+            SourceFiles = JsonSerializer.Serialize(new[] { "Source/Game/Orphan.cpp" })
+        });
+        await context.SaveChangesAsync();
+        var analyzer = CreateAnalyzer(context);
+
+        var plan = await analyzer.AnalyzeAsync(Request(
+            new IncrementalSourceChange("edit", null, "Source/Game/Foo.cpp")));
+
+        Assert.Equal(IncrementalImpactLevel.LeafPages, plan.RequestedLevel);
+        Assert.Equal(IncrementalImpactLevel.LeafPages, plan.ExecutionLevel);
+        Assert.Equal(["page-1"], plan.AffectedPageIds);
+        Assert.DoesNotContain(IncrementalImpactReasonCodes.DependencyReadFailed, plan.ReasonCodes);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_HistoricalGenerationDocumentsAreIgnored()
+    {
+        await using var context = CreateContext();
+        await SeedPublishedPageAsync(context, "Source/Game/Foo.cpp", sourceFilesJson: null);
+        context.DocFiles.Add(new DocFile
+        {
+            Id = "doc-old",
+            BranchLanguageId = "lang-zh",
+            GenerationId = "generation-old",
+            Content = "old",
+            SourceFiles = JsonSerializer.Serialize(new[] { "Source/Game/OldOnly.cpp" })
+        });
+        context.DocCatalogs.Add(new DocCatalog
+        {
+            Id = "page-old",
+            BranchLanguageId = "lang-zh",
+            GenerationId = "generation-old",
+            Path = "game/old",
+            Title = "Old",
+            DocFileId = "doc-old"
+        });
+        await context.SaveChangesAsync();
+        var analyzer = CreateAnalyzer(context);
+
+        var plan = await analyzer.AnalyzeAsync(Request(
+            new IncrementalSourceChange("edit", null, "Source/Game/OldOnly.cpp")));
+
+        // 历史世代的 SourceFiles 不可见 → 缺少依赖，fail-closed 升级
+        Assert.Equal(IncrementalImpactLevel.DomainReplan, plan.RequestedLevel);
+        Assert.Contains(IncrementalImpactReasonCodes.MissingDocumentDependency, plan.ReasonCodes);
+        Assert.DoesNotContain("page-old", plan.AffectedPageIds);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_DeleteOnlyWithRecordedSourceTargetsLeafPage()
+    {
+        await using var context = CreateContext();
+        await SeedPublishedPageAsync(context, "Source/Game/Foo.cpp", sourceFilesJson: null);
+        var analyzer = CreateAnalyzer(context);
+
+        var plan = await analyzer.AnalyzeAsync(Request(
+            new IncrementalSourceChange("delete", "Source/Game/Foo.cpp", null)));
+
+        Assert.Equal(IncrementalImpactLevel.LeafPages, plan.RequestedLevel);
+        Assert.Equal(IncrementalImpactLevel.LeafPages, plan.ExecutionLevel);
+        Assert.Contains(IncrementalImpactReasonCodes.RecordedPageSourceChanged, plan.ReasonCodes);
+        Assert.Equal(["page-1"], plan.AffectedPageIds);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_DeleteOnlyWithoutDependencyFailsClosed()
+    {
+        await using var context = CreateContext();
+        var analyzer = CreateAnalyzer(context);
+
+        var plan = await analyzer.AnalyzeAsync(Request(
+            new IncrementalSourceChange("delete", "Source/Game/Unknown.cpp", null)));
+
+        Assert.Equal(IncrementalImpactLevel.DomainReplan, plan.RequestedLevel);
+        Assert.Equal(IncrementalImpactLevel.FullInventoryAndPlanning, plan.ExecutionLevel);
+        Assert.Contains(IncrementalImpactReasonCodes.MissingDocumentDependency, plan.ReasonCodes);
+        Assert.True(plan.IsFailClosed);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_CaseSensitivePathsPreserveDistinctCasingsInPlan()
+    {
+        await using var context = CreateContext();
+        var analyzer = CreateAnalyzer(context);
+        var baseRequest = Request(
+            new IncrementalSourceChange("edit", null, "Source/Game/Foo.cpp"),
+            new IncrementalSourceChange("edit", null, "Source/Game/foo.cpp"));
+
+        var plan = await analyzer.AnalyzeAsync(new IncrementalImpactRequest
+        {
+            RepositoryId = baseRequest.RepositoryId,
+            BranchId = baseRequest.BranchId,
+            Changes = baseRequest.Changes,
+            SelectionPolicy = baseRequest.SelectionPolicy,
+            CaseSensitivePaths = true
+        });
+
+        Assert.Equal(2, plan.ChangedPaths.Count);
+        Assert.Contains("Source/Game/Foo.cpp", plan.ChangedPaths);
+        Assert.Contains("Source/Game/foo.cpp", plan.ChangedPaths);
     }
 
     [Fact]

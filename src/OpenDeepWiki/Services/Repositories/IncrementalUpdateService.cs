@@ -425,8 +425,8 @@ public class IncrementalUpdateService : IIncrementalUpdateService
         string? targetRevision,
         IReadOnlyList<string> changedFiles,
         IReadOnlyList<string>? deletedFiles = null,
-        CancellationToken cancellationToken = default,
-        string? impactPlanJson = null)
+        string? impactPlanJson = null,
+        CancellationToken cancellationToken = default)
     {
         _logger.LogInformation(
             "External incremental update injected. RepositoryId: {RepositoryId}, BranchId: {BranchId}, TargetRevision: {TargetRevision}, ChangedFiles: {ChangedCount}, DeletedFiles: {DeletedCount}",

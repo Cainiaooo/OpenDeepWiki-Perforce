@@ -12,8 +12,8 @@ public interface IBranchGenerationTaskService
         string? requestedBy = null,
         int priority = 100,
         string? targetCommitId = null,
-        CancellationToken cancellationToken = default,
-        string? impactPlanJson = null);
+        string? impactPlanJson = null,
+        CancellationToken cancellationToken = default);
 
     Task<BranchGenerationTaskResult> RetryAsync(
         string taskId,
@@ -42,8 +42,8 @@ public sealed class BranchGenerationTaskService(
         string? requestedBy = null,
         int priority = 100,
         string? targetCommitId = null,
-        CancellationToken cancellationToken = default,
-        string? impactPlanJson = null)
+        string? impactPlanJson = null,
+        CancellationToken cancellationToken = default)
     {
         var repository = await context.Repositories
             .FirstOrDefaultAsync(item => item.Id == repositoryId && !item.IsDeleted, cancellationToken);

@@ -173,7 +173,8 @@ public sealed class PerforceIncrementalEventService(
                     0,
                     0,
                     0,
-                    "相同目标 changelist 的增量任务已在队列中");
+                    "相同目标 changelist 的增量任务已在队列中",
+                    ImpactPlan: IncrementalImpactPlanSerializer.Deserialize(activeIncrementalTask.ImpactPlanJson));
             }
 
             throw new InvalidOperationException(
@@ -201,7 +202,8 @@ public sealed class PerforceIncrementalEventService(
                     0,
                     0,
                     0,
-                    "相同目标 changelist 的全量任务已在队列中");
+                    "相同目标 changelist 的全量任务已在队列中",
+                    ImpactPlan: IncrementalImpactPlanSerializer.Deserialize(activeFullGenerationTask.ImpactPlanJson));
             }
 
             throw new InvalidOperationException(
@@ -374,6 +376,11 @@ public sealed class PerforceIncrementalEventService(
             }
         }
 
+        var scopeConfigurationChanged = await HasScopeConfigurationChangedAsync(
+            repositoryId,
+            branchId,
+            scopeConfig,
+            cancellationToken);
         var impactPlanResult = await impactAnalyzer.AnalyzeAsync(
             new IncrementalImpactRequest
             {
@@ -385,7 +392,8 @@ public sealed class PerforceIncrementalEventService(
                     change.NewWorkspaceRelativePath,
                     change.FileType)).ToArray(),
                 SelectionPolicy = selectionPolicy,
-                CaseSensitivePaths = filterOptions.CaseSensitivePaths
+                CaseSensitivePaths = filterOptions.CaseSensitivePaths,
+                ScopeConfigurationChanged = scopeConfigurationChanged
             },
             cancellationToken);
 
@@ -434,6 +442,41 @@ public sealed class PerforceIncrementalEventService(
                 : "已创建 Perforce 增量更新任务",
             includedChanges,
             impactPlanResult);
+    }
+
+    /// <summary>
+    /// 比较当前 Scope ContentHash 与分支最近一次已发布世代；不一致则要求全量重建。
+    /// 尚无带 hash 的发布记录时不强制（首次生成建立基线）。
+    /// </summary>
+    private async Task<bool> HasScopeConfigurationChangedAsync(
+        string repositoryId,
+        string branchId,
+        ResolvedScopeConfiguration? scopeConfig,
+        CancellationToken cancellationToken)
+    {
+        if (scopeConfig is null || string.IsNullOrWhiteSpace(scopeConfig.ContentHash))
+        {
+            return false;
+        }
+
+        var publishedHash = await context.WikiGenerations
+            .AsNoTracking()
+            .Where(generation => !generation.IsDeleted
+                                 && generation.RepositoryId == repositoryId
+                                 && generation.BranchId == branchId
+                                 && generation.Status == WikiGenerationStatus.Published
+                                 && generation.ScopeContentHash != null
+                                 && generation.ScopeContentHash != string.Empty)
+            .OrderByDescending(generation => generation.PublishedAt ?? generation.CreatedAt)
+            .Select(generation => generation.ScopeContentHash)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(publishedHash))
+        {
+            return false;
+        }
+
+        return !string.Equals(publishedHash, scopeConfig.ContentHash, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<long?> ResolveTargetChangelistAsync(

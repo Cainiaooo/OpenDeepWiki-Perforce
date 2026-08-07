@@ -303,44 +303,58 @@ public sealed class IncrementalImpactAnalyzer(
         var dependencyMap = request.RecordedDependencies
             .GroupBy(dependency => dependency.SourceId, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
-        var matched = factIds
-            .Where(dependencyMap.ContainsKey)
+        var matchedFacts = factIds.Where(dependencyMap.ContainsKey).ToArray();
+        var unmatchedFacts = factIds.Where(factId => !dependencyMap.ContainsKey(factId)).ToArray();
+        var matchedPages = matchedFacts
             .SelectMany(factId => dependencyMap[factId])
             .ToArray();
 
-        if (matched.Length > 0)
+        // 仅当全部 fact 都能解析到已登记依赖时才允许 LeafPages，避免部分命中静默漏更。
+        if (matchedFacts.Length > 0 && unmatchedFacts.Length == 0)
         {
             return BuildPlan(
                 IncrementalImpactLevel.LeafPages,
                 [IncrementalImpactReasonCodes.UeFactDependencyChanged],
                 factIds,
-                matched,
+                matchedPages,
                 request.SemanticDiff.AffectedDomainHints,
                 isFailClosed: false);
         }
 
+        var reasons = new List<string>();
+        if (matchedFacts.Length > 0)
+        {
+            reasons.Add(IncrementalImpactReasonCodes.UeFactDependencyChanged);
+        }
+
+        if (unmatchedFacts.Length > 0)
+        {
+            reasons.Add(IncrementalImpactReasonCodes.MissingUeFactDependency);
+        }
+
         if (request.SemanticDiff.AffectedDomainHints.Count > 0)
         {
+            if (matchedFacts.Length == 0)
+            {
+                reasons.Insert(0, IncrementalImpactReasonCodes.UeDomainHintChanged);
+            }
+
             return BuildPlan(
                 IncrementalImpactLevel.DomainReplan,
-                [
-                    IncrementalImpactReasonCodes.UeDomainHintChanged,
-                    IncrementalImpactReasonCodes.MissingUeFactDependency
-                ],
+                reasons,
                 factIds,
-                [],
+                matchedPages,
                 request.SemanticDiff.AffectedDomainHints,
                 isFailClosed: true);
         }
 
-        return new IncrementalImpactPlan
-        {
-            RequestedLevel = IncrementalImpactLevel.FullInventoryAndPlanning,
-            ExecutionLevel = IncrementalImpactLevel.FullInventoryAndPlanning,
-            ReasonCodes = [IncrementalImpactReasonCodes.MissingUeFactDependency],
-            ChangedPaths = factIds,
-            IsFailClosed = true
-        };
+        return BuildPlan(
+            IncrementalImpactLevel.FullInventoryAndPlanning,
+            reasons.Count > 0 ? reasons : [IncrementalImpactReasonCodes.MissingUeFactDependency],
+            factIds,
+            matchedPages,
+            [],
+            isFailClosed: true);
     }
 
     private static IncrementalImpactPlan Classify(
@@ -465,7 +479,8 @@ public sealed class IncrementalImpactAnalyzer(
             changedPaths,
             pages.Values,
             domains,
-            failClosed);
+            failClosed,
+            request.CaseSensitivePaths);
     }
 
     private static void ClassifyMove(
@@ -520,7 +535,8 @@ public sealed class IncrementalImpactAnalyzer(
         IEnumerable<string> changedPaths,
         IEnumerable<IncrementalPageDependency> pages,
         IEnumerable<string> domains,
-        bool isFailClosed)
+        bool isFailClosed,
+        bool caseSensitivePaths = false)
     {
         var executionLevel = requestedLevel;
         var reasons = reasonCodes.ToHashSet(StringComparer.Ordinal);
@@ -532,6 +548,7 @@ public sealed class IncrementalImpactAnalyzer(
             reasons.Add(IncrementalImpactReasonCodes.PartialGenerationUnavailable);
         }
 
+        var pathComparer = caseSensitivePaths ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
         var pageArray = pages
             .GroupBy(PageKey, StringComparer.Ordinal)
             .Select(group => group.First())
@@ -547,8 +564,8 @@ public sealed class IncrementalImpactAnalyzer(
             ChangedPaths = changedPaths
                 .Where(path => !string.IsNullOrWhiteSpace(path))
                 .Select(NormalizeSourceId)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Order(StringComparer.OrdinalIgnoreCase)
+                .Distinct(pathComparer)
+                .Order(pathComparer)
                 .ToArray(),
             AffectedPageIds = pageArray.Select(page => page.PageId).Distinct(StringComparer.Ordinal).ToArray(),
             AffectedPagePaths = pageArray.Select(page => page.PagePath).Distinct(StringComparer.Ordinal).ToArray(),
@@ -591,11 +608,26 @@ public sealed class IncrementalImpactAnalyzer(
             publication => publication.CurrentGenerationId!,
             StringComparer.Ordinal);
 
+        // SQL 层按当前世代过滤，避免多代 UE 大仓先整表拉入内存再过滤。
+        // GenerationId 为 GUID，跨语言碰撞可忽略；无 publication 的遗留语言单独取空 GenerationId。
+        var currentGenerationIds = currentGenerationByLanguage.Values
+            .Where(id => !string.IsNullOrEmpty(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var publishedLanguageIds = currentGenerationByLanguage.Keys.ToList();
+        var unpublishedLanguageIds = languageIds
+            .Where(id => !currentGenerationByLanguage.ContainsKey(id))
+            .ToList();
+
         var sourceDocuments = await context.DocFiles
             .AsNoTracking()
-            .Where(document => languageIds.Contains(document.BranchLanguageId)
-                               && !document.IsDeleted
-                               && document.SourceFiles != null)
+            .Where(document => !document.IsDeleted
+                               && document.SourceFiles != null
+                               && (
+                                   (publishedLanguageIds.Contains(document.BranchLanguageId)
+                                    && currentGenerationIds.Contains(document.GenerationId!))
+                                   || (unpublishedLanguageIds.Contains(document.BranchLanguageId)
+                                       && (document.GenerationId == null || document.GenerationId == string.Empty))))
             .Select(document => new
             {
                 document.Id,
@@ -605,6 +637,7 @@ public sealed class IncrementalImpactAnalyzer(
             })
             .ToListAsync(cancellationToken);
 
+        // 二次校验语言-世代配对（防御性；SQL 已按 generation id 集合收窄）
         var visibleDocuments = sourceDocuments
             .Where(document => currentGenerationByLanguage.TryGetValue(document.BranchLanguageId, out var generationId)
                 ? string.Equals(document.GenerationId, generationId, StringComparison.Ordinal)
@@ -622,7 +655,12 @@ public sealed class IncrementalImpactAnalyzer(
                 .AsNoTracking()
                 .Where(catalog => !catalog.IsDeleted
                                   && catalog.DocFileId != null
-                                  && documentIds.Contains(catalog.DocFileId))
+                                  && documentIds.Contains(catalog.DocFileId)
+                                  && (
+                                      (publishedLanguageIds.Contains(catalog.BranchLanguageId)
+                                       && currentGenerationIds.Contains(catalog.GenerationId!))
+                                      || (unpublishedLanguageIds.Contains(catalog.BranchLanguageId)
+                                          && (catalog.GenerationId == null || catalog.GenerationId == string.Empty))))
                 .Select(catalog => new
                 {
                     catalog.Id,
@@ -644,7 +682,14 @@ public sealed class IncrementalImpactAnalyzer(
         {
             if (!catalogByDocument.TryGetValue(document.Id, out var catalog))
             {
-                throw new DependencyLoadException(IncrementalImpactReasonCodes.DependencyReadFailed);
+                // 孤儿 DocFile 不应把整分支强制 Full；跳过并记 warning，由变更路径侧的
+                // MissingDocumentDependency / MissingContextDependency 做 fail-closed。
+                logger.LogWarning(
+                    "Skipping DocFile without resolvable catalog while loading incremental dependencies. DocFileId: {DocFileId}, BranchLanguageId: {BranchLanguageId}, GenerationId: {GenerationId}",
+                    document.Id,
+                    document.BranchLanguageId,
+                    document.GenerationId);
+                continue;
             }
 
             string[]? sourcePaths;

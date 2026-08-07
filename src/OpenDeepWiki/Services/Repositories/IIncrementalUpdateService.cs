@@ -55,8 +55,8 @@ public interface IIncrementalUpdateService
     /// <param name="targetRevision">目标版本标识(如 Perforce changelist 号)。</param>
     /// <param name="changedFiles">新增/修改的文件相对路径列表。</param>
     /// <param name="deletedFiles">删除的文件相对路径列表(当前引擎不处理删除，仅记录)。</param>
-    /// <param name="cancellationToken">取消令牌</param>
     /// <param name="impactPlanJson">T5.2 影响分级计划 JSON；手动兼容入口可为空。</param>
+    /// <param name="cancellationToken">取消令牌</param>
     /// <returns>创建或复用的任务ID</returns>
     Task<string> TriggerExternalUpdateAsync(
         string repositoryId,
@@ -64,8 +64,8 @@ public interface IIncrementalUpdateService
         string? targetRevision,
         IReadOnlyList<string> changedFiles,
         IReadOnlyList<string>? deletedFiles = null,
-        CancellationToken cancellationToken = default,
-        string? impactPlanJson = null);
+        string? impactPlanJson = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
