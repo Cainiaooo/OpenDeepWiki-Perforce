@@ -24,6 +24,7 @@ using OpenDeepWiki.Services.Recommendation;
 using OpenDeepWiki.Services.Context;
 using OpenDeepWiki.Services.Generation;
 using OpenDeepWiki.Services.Repositories;
+using OpenDeepWiki.Services.Repositories.Impact;
 using OpenDeepWiki.Services.Repositories.Perforce;
 using OpenDeepWiki.Services.Repositories.Scope;
 using OpenDeepWiki.Services.Translation;
@@ -208,6 +209,7 @@ try
     builder.Services.AddSingleton<IDomainTopicPlanner, DomainTopicPlanner>();
     builder.Services.AddSingleton<ICatalogMerger, CatalogMerger>();
     builder.Services.AddSingleton<ICoverageAuditor, CoverageAuditor>();
+    builder.Services.AddScoped<IIncrementalImpactAnalyzer, IncrementalImpactAnalyzer>();
     builder.Services.AddScoped<IGenerationEngine, LegacyGenerationEngine>();
     builder.Services.AddScoped<IGenerationEngine, HierarchicalGenerationEngine>();
     builder.Services.AddScoped<IGenerationEngineRegistry>(sp =>

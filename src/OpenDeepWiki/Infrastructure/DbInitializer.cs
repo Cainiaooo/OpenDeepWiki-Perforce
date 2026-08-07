@@ -292,7 +292,7 @@ public static class DbInitializer
         }
     }
 
-    private static async Task MigrateSqliteAsync(DbContext ctx)
+    internal static async Task MigrateSqliteAsync(DbContext ctx)
     {
         await ctx.Database.ExecuteSqlRawAsync(@"
             CREATE TABLE IF NOT EXISTS GraphifyArtifacts (
@@ -695,6 +695,20 @@ public static class DbInitializer
             "CREATE INDEX IF NOT EXISTS IX_UeKnowledgePackages_RepositoryId_BranchId_IsCurrent ON UeKnowledgePackages (RepositoryId, BranchId, IsCurrent)");
         await ctx.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_UeKnowledgePackages_BranchId_BuildChangelist ON UeKnowledgePackages (BranchId, BuildChangelist)");
+
+        // P4 Phase3 WP5 T5.2: persisted incremental impact plan.
+        await AddSqliteColumnIfMissingAsync(
+            connection,
+            ctx,
+            "IncrementalUpdateTasks",
+            "ImpactPlanJson",
+            "TEXT");
+        await AddSqliteColumnIfMissingAsync(
+            connection,
+            ctx,
+            "BranchGenerationTasks",
+            "ImpactPlanJson",
+            "TEXT");
     }
 
     private static async Task AddSqliteColumnIfMissingAsync(
@@ -1122,5 +1136,10 @@ public static class DbInitializer
             CREATE INDEX IF NOT EXISTS ""IX_UeKnowledgePackages_RepositoryId_BranchId_IsCurrent"" ON ""UeKnowledgePackages"" (""RepositoryId"", ""BranchId"", ""IsCurrent"")");
         await ctx.Database.ExecuteSqlRawAsync(@"
             CREATE INDEX IF NOT EXISTS ""IX_UeKnowledgePackages_BranchId_BuildChangelist"" ON ""UeKnowledgePackages"" (""BranchId"", ""BuildChangelist"")");
+
+        // P4 Phase3 WP5 T5.2: persisted incremental impact plan.
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""IncrementalUpdateTasks"" ADD COLUMN IF NOT EXISTS ""ImpactPlanJson"" TEXT;
+            ALTER TABLE ""BranchGenerationTasks"" ADD COLUMN IF NOT EXISTS ""ImpactPlanJson"" TEXT;");
     }
 }

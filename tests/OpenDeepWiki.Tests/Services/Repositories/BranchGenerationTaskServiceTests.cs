@@ -109,16 +109,19 @@ public class BranchGenerationTaskServiceTests
         await context.SaveChangesAsync();
 
         var service = CreateService(context);
+        const string impactPlanJson = "{\"schemaVersion\":1}";
 
         var result = await service.EnqueueFullGenerationAsync(
             repository.Id,
             branch.BranchId,
-            targetCommitId: "4242");
+            targetCommitId: "4242",
+            impactPlanJson: impactPlanJson);
 
         Assert.True(result.Success);
         Assert.Equal("4242", result.Task?.TargetCommitId);
         var stored = await context.BranchGenerationTasks.SingleAsync();
         Assert.Equal("4242", stored.TargetCommitId);
+        Assert.Equal(impactPlanJson, stored.ImpactPlanJson);
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Repositories.Impact;
 using OpenDeepWiki.Services.Repositories.Scope;
 
 namespace OpenDeepWiki.Services.Repositories.Perforce;
@@ -27,7 +28,8 @@ public sealed record PerforceIncrementalEventResult(
     int InspectedFiles,
     int IncludedFiles,
     string Message,
-    IReadOnlyList<PerforceLogicalChange>? Changes = null);
+    IReadOnlyList<PerforceLogicalChange>? Changes = null,
+    IncrementalImpactPlan? ImpactPlan = null);
 
 public interface IPerforceIncrementalEventService
 {
@@ -48,6 +50,7 @@ public sealed class PerforceIncrementalEventService(
     IIncrementalUpdateService incrementalUpdateService,
     IBranchGenerationTaskService branchGenerationTaskService,
     IScopeConfigurationService scopeConfigurationService,
+    IIncrementalImpactAnalyzer impactAnalyzer,
     IOptionsMonitor<PerforceOptions> optionsMonitor,
     ILogger<PerforceIncrementalEventService> logger) : IPerforceIncrementalEventService
 {
@@ -112,6 +115,7 @@ public sealed class PerforceIncrementalEventService(
                 branchId,
                 targetCl.Value.ToString(CultureInfo.InvariantCulture),
                 [],
+                impactPlanJson: IncrementalImpactPlanSerializer.Serialize(IncrementalImpactPlan.None()),
                 cancellationToken: cancellationToken);
 
             logger.LogInformation(
@@ -126,7 +130,8 @@ public sealed class PerforceIncrementalEventService(
                 0,
                 0,
                 0,
-                "已创建数字型 changelist 基线任务");
+                "已创建数字型 changelist 基线任务",
+                ImpactPlan: IncrementalImpactPlan.None());
         }
 
         if (targetCl.Value <= baseCl)
@@ -237,6 +242,8 @@ public sealed class PerforceIncrementalEventService(
 
         if (changelists.Count > filterOptions.MaxChangelists)
         {
+            var impactPlan = IncrementalImpactPlan.Full(
+                IncrementalImpactReasonCodes.ChangelistThresholdExceeded);
             return await QueueFullGenerationAsync(
                 repositoryId,
                 branchId,
@@ -244,7 +251,9 @@ public sealed class PerforceIncrementalEventService(
                 changelists.Count,
                 0,
                 0,
+                0,
                 $"changelist 数 {changelists.Count} 超过阈值 {filterOptions.MaxChangelists}",
+                impactPlan,
                 cancellationToken);
         }
 
@@ -342,6 +351,9 @@ public sealed class PerforceIncrementalEventService(
                 var uniqueFileCount = CountUniqueLogicalFiles(changedFiles, deletedFiles, comparer);
                 if (uniqueFileCount > filterOptions.MaxFiles)
                 {
+                    var impactPlan = IncrementalImpactPlan.Full(
+                        IncrementalImpactReasonCodes.FileThresholdExceeded,
+                        changedFiles.Concat(deletedFiles));
                     return await QueueFullGenerationAsync(
                         repositoryId,
                         branchId,
@@ -349,7 +361,9 @@ public sealed class PerforceIncrementalEventService(
                         changelists.Count,
                         includedChangelists + 1,
                         inspectedFiles,
+                        uniqueFileCount,
                         $"过滤后文件数超过阈值 {filterOptions.MaxFiles}",
+                        impactPlan,
                         cancellationToken);
                 }
             }
@@ -360,19 +374,52 @@ public sealed class PerforceIncrementalEventService(
             }
         }
 
+        var impactPlanResult = await impactAnalyzer.AnalyzeAsync(
+            new IncrementalImpactRequest
+            {
+                RepositoryId = repositoryId,
+                BranchId = branchId,
+                Changes = includedChanges.Select(change => new IncrementalSourceChange(
+                    change.Action,
+                    change.OldWorkspaceRelativePath,
+                    change.NewWorkspaceRelativePath,
+                    change.FileType)).ToArray(),
+                SelectionPolicy = selectionPolicy,
+                CaseSensitivePaths = filterOptions.CaseSensitivePaths
+            },
+            cancellationToken);
+
+        if (impactPlanResult.RequiresFullGeneration)
+        {
+            return await QueueFullGenerationAsync(
+                repositoryId,
+                branchId,
+                targetCl.Value,
+                changelists.Count,
+                includedChangelists,
+                inspectedFiles,
+                changedFiles.Count + deletedFiles.Count,
+                $"影响分析升级为 {impactPlanResult.ExecutionLevel} ({string.Join(", ", impactPlanResult.ReasonCodes)})",
+                impactPlanResult,
+                cancellationToken);
+        }
+
+        var impactPlanJson = IncrementalImpactPlanSerializer.Serialize(impactPlanResult);
         var task = await incrementalUpdateService.TriggerExternalUpdateAsync(
             repositoryId,
             branchId,
             targetRevision,
             changedFiles.Order(comparer).ToArray(),
             deletedFiles.Order(comparer).ToArray(),
-            cancellationToken);
+            cancellationToken: cancellationToken,
+            impactPlanJson: impactPlanJson);
 
         var includedFileCount = changedFiles.Count + deletedFiles.Count;
         logger.LogInformation(
-            "Perforce interval filtered and queued. RepositoryId: {RepositoryId}, BranchId: {BranchId}, BaseCL: {BaseCL}, TargetCL: {TargetCL}, TotalCLs: {TotalCLs}, IncludedCLs: {IncludedCLs}, InspectedFiles: {InspectedFiles}, IncludedFiles: {IncludedFiles}, TaskId: {TaskId}",
+            "Perforce interval filtered and queued. RepositoryId: {RepositoryId}, BranchId: {BranchId}, BaseCL: {BaseCL}, TargetCL: {TargetCL}, TotalCLs: {TotalCLs}, IncludedCLs: {IncludedCLs}, InspectedFiles: {InspectedFiles}, IncludedFiles: {IncludedFiles}, RequestedImpact: {RequestedImpact}, ExecutionImpact: {ExecutionImpact}, ImpactReasons: {ImpactReasons}, TaskId: {TaskId}",
             repositoryId, branchId, baseCl, targetCl.Value, changelists.Count, includedChangelists,
-            inspectedFiles, includedFileCount, task);
+            inspectedFiles, includedFileCount, impactPlanResult.RequestedLevel, impactPlanResult.ExecutionLevel,
+            impactPlanResult.ReasonCodes, task);
 
         return new PerforceIncrementalEventResult(
             PerforceIncrementalEventAction.IncrementalQueued,
@@ -385,7 +432,8 @@ public sealed class PerforceIncrementalEventService(
             includedFileCount == 0
                 ? "区间内变更均被过滤，已创建基线推进任务"
                 : "已创建 Perforce 增量更新任务",
-            includedChanges);
+            includedChanges,
+            impactPlanResult);
     }
 
     private async Task<long?> ResolveTargetChangelistAsync(
@@ -478,7 +526,9 @@ public sealed class PerforceIncrementalEventService(
         int totalChangelists,
         int includedChangelists,
         int inspectedFiles,
+        int includedFiles,
         string reason,
+        IncrementalImpactPlan impactPlan,
         CancellationToken cancellationToken)
     {
         var targetRevision = targetCl.ToString(CultureInfo.InvariantCulture);
@@ -488,6 +538,7 @@ public sealed class PerforceIncrementalEventService(
             requestedBy: null,
             priority: 100,
             targetCommitId: targetRevision,
+            impactPlanJson: IncrementalImpactPlanSerializer.Serialize(impactPlan),
             cancellationToken: cancellationToken);
         if (!result.Success || result.Task == null)
         {
@@ -496,8 +547,9 @@ public sealed class PerforceIncrementalEventService(
         }
 
         logger.LogWarning(
-            "Perforce interval switched to full generation. RepositoryId: {RepositoryId}, BranchId: {BranchId}, TargetCL: {TargetCL}, Reason: {Reason}, TaskId: {TaskId}",
-            repositoryId, branchId, targetCl, reason, result.Task.Id);
+            "Perforce interval switched to full generation. RepositoryId: {RepositoryId}, BranchId: {BranchId}, TargetCL: {TargetCL}, RequestedImpact: {RequestedImpact}, ExecutionImpact: {ExecutionImpact}, ImpactReasons: {ImpactReasons}, Reason: {Reason}, TaskId: {TaskId}",
+            repositoryId, branchId, targetCl, impactPlan.RequestedLevel, impactPlan.ExecutionLevel,
+            impactPlan.ReasonCodes, reason, result.Task.Id);
 
         return new PerforceIncrementalEventResult(
             PerforceIncrementalEventAction.FullGenerationQueued,
@@ -506,8 +558,9 @@ public sealed class PerforceIncrementalEventService(
             totalChangelists,
             includedChangelists,
             inspectedFiles,
-            0,
-            $"{reason}，已转为全量生成任务");
+            includedFiles,
+            $"{reason}，已转为全量生成任务",
+            ImpactPlan: impactPlan);
     }
 
     private bool EvaluatePath(

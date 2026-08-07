@@ -1,6 +1,6 @@
 # WP5：增量维护、运维与质量门禁
 
-**状态**：进行中（T5.1 已落地：显式 ChangeTrigger filespec、多 Scope CL 去重、move old/new 配对与跨 Scope 判定；T5.2–T5.3、运维和质量门禁待实施）
+**状态**：进行中（T5.1–T5.2 已落地：显式 ChangeTrigger filespec、多 Scope CL 去重、move old/new 配对、影响分级与可解释的安全升级；T5.3、运维和质量门禁待实施）
 
 **目标**：让知识库能够长期由 Agent 维护，并且对漏更新、错误版本、预算截断和质量退化可发现、可恢复。
 
@@ -12,9 +12,11 @@
 | 多 filespec 查询、CL 去重、move metadata | `src/OpenDeepWiki/Services/Repositories/Perforce/PerforceCliClient.cs` |
 | move action 配对与 old/new identity | `src/OpenDeepWiki/Services/Repositories/Perforce/PerforceChangeCollator.cs` |
 | 跨 Scope 判定与增量任务投递 | `src/OpenDeepWiki/Services/Repositories/Perforce/PerforceIncrementalEventService.cs` |
-| T5.1 回归测试 | `tests/OpenDeepWiki.Tests/Services/Repositories/PerforceCliClientTests.cs`、`PerforceChangeCollatorTests.cs`、`PerforceIncrementalEventServiceTests.cs` |
+| 来源无关的影响分级与 reason code | `src/OpenDeepWiki/Services/Repositories/Impact/IncrementalImpactAnalyzer.cs` |
+| 影响计划持久化 | `IncrementalUpdateTask.ImpactPlanJson`、`BranchGenerationTask.ImpactPlanJson`、provider migrations 及 `DbInitializer` 运行时升级 |
+| T5.1–T5.2 回归测试 | `tests/OpenDeepWiki.Tests/Services/Repositories/PerforceCliClientTests.cs`、`PerforceChangeCollatorTests.cs`、`PerforceIncrementalEventServiceTests.cs`、`Impact/IncrementalImpactAnalyzerTests.cs` |
 
-T5.1 只把受 Scope 接受的端点投递给现有增量生成任务，同时在事件响应中保留完整 move old/new path。source/fact → page/domain 的持久化依赖和影响计划属于 T5.2–T5.3，不能把当前路径级结果描述为已经完成页面级最小重建。
+T5.1 把受 Scope 接受的端点交给统一影响分析，并在事件响应中保留完整 move old/new path。T5.2 会生成、持久化并回显影响计划；当前可复用已发布 `DocFile.SourceFiles` 作为正文来源依赖，但 source/fact → page/domain 的长期反向索引、planning/content 依赖拆分和 stale 生命周期仍属于 T5.3。因此不能把当前实现描述为已经完成确定性的页面级最小重建。
 
 ## 1. Perforce 增量范围对齐
 
@@ -42,6 +44,15 @@ T5.1 只把受 Scope 接受的端点投递给现有增量生成任务，同时�
 | 未知或影响计算失败 | fail closed，升级到领域或全量重建 |
 
 首期可以保守扩大重建范围，但必须记录升级原因，不能静默漏更。
+
+#### T5.2 当前实现
+
+- `IncrementalImpactPlan` 同时记录 `RequestedLevel`（分析得到的最小安全范围）和 `ExecutionLevel`（当前 worker 实际执行范围），并保存稳定 reason code、受影响页面/领域提示及 fail-closed 状态。
+- Perforce 只负责把原生 action 转成来源无关的 old/new path 变化；分类器本身不依赖 Perforce，可供 Git 或其他来源复用。
+- 已发布页面的 `DocFile.SourceFiles` 暂时提供 content dependency。证据缺失、格式损坏、读取失败或超过扫描预算时不猜测，升级到领域或全量。
+- 当前 `BranchGenerationTask` 只支持 Full 模式，因此 `DomainInventory` / `DomainReplan` 会把执行范围显式扩大为 `FullInventoryAndPlanning`，记录 `execution.partial_generation_unavailable`，而不是静默宣称局部执行成功。
+- 影响计划随增量任务或全量任务持久化，并通过任务查询和 Perforce 事件响应回显。兼容用的手工 external injection 入口可以没有计划；由 Perforce event 服务产生的任务必须携带计划。
+- UE Knowledge 语义 diff 已有 fact dependency / domain hint 分类契约；自动使消费页面 stale 并调度重建要等 T5.3 的持久化依赖索引接入。
 
 ## 2. 依赖记录与知识失效
 

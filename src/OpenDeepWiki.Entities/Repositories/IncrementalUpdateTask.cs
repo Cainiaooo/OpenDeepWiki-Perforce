@@ -80,6 +80,11 @@ public class IncrementalUpdateTask : AggregateRoot<string>
     public string? ExternalTargetRevision { get; set; }
 
     /// <summary>
+    /// T5.2 可解释影响计划 JSON。包含请求的最小范围、实际执行范围和稳定 reason code。
+    /// </summary>
+    public string? ImpactPlanJson { get; set; }
+
+    /// <summary>
     /// 任务状态
     /// </summary>
     public IncrementalUpdateStatus Status { get; set; } = IncrementalUpdateStatus.Pending;

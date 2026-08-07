@@ -12,7 +12,8 @@ public interface IBranchGenerationTaskService
         string? requestedBy = null,
         int priority = 100,
         string? targetCommitId = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? impactPlanJson = null);
 
     Task<BranchGenerationTaskResult> RetryAsync(
         string taskId,
@@ -41,7 +42,8 @@ public sealed class BranchGenerationTaskService(
         string? requestedBy = null,
         int priority = 100,
         string? targetCommitId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? impactPlanJson = null)
     {
         var repository = await context.Repositories
             .FirstOrDefaultAsync(item => item.Id == repositoryId && !item.IsDeleted, cancellationToken);
@@ -82,6 +84,7 @@ public sealed class BranchGenerationTaskService(
             RequestedBy = requestedBy,
             // Set before the first persist so workers never claim a Perforce promotion task with a null target.
             TargetCommitId = string.IsNullOrWhiteSpace(targetCommitId) ? null : targetCommitId.Trim(),
+            ImpactPlanJson = string.IsNullOrWhiteSpace(impactPlanJson) ? null : impactPlanJson,
             CreatedAt = DateTime.UtcNow
         };
 
