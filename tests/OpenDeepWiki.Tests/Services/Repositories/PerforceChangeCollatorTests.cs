@@ -50,4 +50,26 @@ public class PerforceChangeCollatorTests
 
         Assert.Contains("movedFile", exception.Message, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void Collate_MoveWithUnmappedPartnerWorkspacePathEmitsOneSidedLogicalMove()
+    {
+        var changes = PerforceChangeCollator.Collate(
+        [
+            new PerforceFileChange(
+                101,
+                "//depot/Game/Source/Old.cpp",
+                "Source/Old.cpp",
+                "move/delete",
+                "text",
+                "//depot/Game/Outside/New.cpp",
+                null)
+        ], StringComparer.OrdinalIgnoreCase);
+
+        var move = Assert.Single(changes);
+        Assert.Equal("move", move.Action);
+        Assert.Equal("Source/Old.cpp", move.OldWorkspaceRelativePath);
+        Assert.Null(move.NewWorkspaceRelativePath);
+        Assert.Equal("//depot/Game/Outside/New.cpp", move.NewDepotPath);
+    }
 }

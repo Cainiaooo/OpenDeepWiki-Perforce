@@ -205,12 +205,17 @@ public sealed class PerforceIncrementalEventService(
 
         // Interval discovery still runs on the request path. Cap work via MaxChangelists/MaxFiles
         // and honor cancellation between CLs so reverse proxies can cancel hung scans.
-        IReadOnlyList<PerforceChangelist> changelists;
-        if (changeFilespecs.Count == 0)
+        // Empty ChangeTrigger filespecs under a non-null scope config means a misconfigured
+        // ChangeTriggerScope (e.g. InheritsDocumentScopes=false and AdditionalRoots=[]).
+        // Fail closed so we never silently skip the interval and advance the baseline.
+        if (scopeConfig is not null && changeFilespecs.Count == 0)
         {
-            changelists = [];
+            throw new InvalidOperationException(
+                "ChangeTriggerScope 未解析出任何 filespec（请检查 InheritsDocumentScopes / DocumentScopes / AdditionalRoots）。拒绝静默漏更。");
         }
-        else if (scopeConfig is null)
+
+        IReadOnlyList<PerforceChangelist> changelists;
+        if (scopeConfig is null)
         {
             changelists = await perforceClient.GetChangelistsAsync(
                 workspaceRoot,
@@ -331,7 +336,10 @@ public sealed class PerforceIncrementalEventService(
                     changedFiles.Add(change.NewWorkspaceRelativePath);
                 }
 
-                var uniqueFileCount = changedFiles.Count + deletedFiles.Count;
+                // Case-only moves may keep both casings in changed+deleted sets so the
+                // payload preserves both path forms. Count logical files with the path
+                // comparer so MaxFiles is not tripped twice for one rename.
+                var uniqueFileCount = CountUniqueLogicalFiles(changedFiles, deletedFiles, comparer);
                 if (uniqueFileCount > filterOptions.MaxFiles)
                 {
                     return await QueueFullGenerationAsync(
@@ -567,6 +575,25 @@ public sealed class PerforceIncrementalEventService(
         return options.IncludedActions.Count == 0
                || options.IncludedActions.Any(included =>
                    included.Equals(action, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static int CountUniqueLogicalFiles(
+        IEnumerable<string> changedFiles,
+        IEnumerable<string> deletedFiles,
+        StringComparer comparer)
+    {
+        var unique = new HashSet<string>(comparer);
+        foreach (var path in changedFiles)
+        {
+            unique.Add(path);
+        }
+
+        foreach (var path in deletedFiles)
+        {
+            unique.Add(path);
+        }
+
+        return unique.Count;
     }
 
     private static void ValidateFilterOptions(PerforceFilterOptions options)

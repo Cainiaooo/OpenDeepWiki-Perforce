@@ -398,6 +398,179 @@ public class PerforceIncrementalEventServiceTests
         fixture.Incremental.VerifyAll();
     }
 
+    [Fact]
+    public async Task TriggerAsync_MoveIntoScopeQueuesChangedOnly()
+    {
+        await using var fixture = CreateFixture("100");
+        var configuration = CreateSourceScopeConfiguration();
+        var expectedFilespec = Path.Combine(fixture.Workspace, "Source", "...");
+        fixture.Scope
+            .Setup(service => service.GetResolvedCurrentAsync(
+                fixture.Repository.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(configuration);
+        fixture.Scope
+            .Setup(service => service.GetPolicyAsync(
+                fixture.Repository.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RepositoryFileSelectionPolicyFactory().Create(
+                configuration,
+                fixture.Workspace));
+        SetupHave(fixture, 101);
+        fixture.Perforce.Setup(client => client.GetChangelistsAsync(
+                fixture.Workspace,
+                100,
+                101,
+                501,
+                It.Is<IReadOnlyList<string>>(filespecs => filespecs.SequenceEqual(new[] { expectedFilespec })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new PerforceChangelist(101, "alice", "move into scope")]);
+        fixture.Perforce.Setup(client => client.GetFileChangesAsync(
+                fixture.Workspace,
+                101,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new PerforceFileChange(
+                    101,
+                    "//depot/Game/Shared/Old.cpp",
+                    "Shared/Old.cpp",
+                    "move/delete",
+                    "text",
+                    "//depot/Game/Source/New.cpp",
+                    "Source/New.cpp"),
+                new PerforceFileChange(
+                    101,
+                    "//depot/Game/Source/New.cpp",
+                    "Source/New.cpp",
+                    "move/add",
+                    "text",
+                    "//depot/Game/Shared/Old.cpp",
+                    "Shared/Old.cpp")
+            ]);
+        fixture.Incremental.Setup(service => service.TriggerExternalUpdateAsync(
+                fixture.Repository.Id,
+                fixture.Branch.Id,
+                "101",
+                It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/New.cpp" })),
+                It.Is<IReadOnlyList<string>>(files => files.Count == 0),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync("move-in-task");
+
+        var result = await fixture.Service.TriggerAsync(
+            fixture.Repository.Id,
+            fixture.Branch.Id,
+            "101");
+
+        var move = Assert.Single(result.Changes!);
+        Assert.Equal("Shared/Old.cpp", move.OldWorkspaceRelativePath);
+        Assert.Equal("Source/New.cpp", move.NewWorkspaceRelativePath);
+        Assert.Equal(1, result.IncludedFiles);
+        fixture.Incremental.VerifyAll();
+    }
+
+    [Fact]
+    public async Task TriggerAsync_EmptyChangeTriggerFilespecsFailsClosedWithoutAdvancingBaseline()
+    {
+        await using var fixture = CreateFixture("100");
+        var configuration = new ResolvedScopeConfiguration
+        {
+            SchemaVersion = 1,
+            WorkspaceContentPolicy = WorkspaceContentPolicy.SubmittedHaveOnly,
+            DocumentScopes =
+            [
+                new ResolvedDocumentScope
+                {
+                    Id = "source",
+                    Root = "Source",
+                    IncludedPathGlobs = ["**"],
+                    ExcludedPathGlobs = [],
+                    IncludedSuffixes = [".cpp"],
+                    AcceptAllTextFiles = false
+                }
+            ],
+            ContextScope = null,
+            ChangeTriggerScope = new ResolvedChangeTriggerScope
+            {
+                InheritsDocumentScopes = false,
+                AdditionalRoots = [],
+                IncludedPathGlobs = ["**"],
+                ExcludedPathGlobs = []
+            },
+            ContentHash = "scope-hash",
+            NormalizedJson = "{}"
+        };
+        fixture.Scope
+            .Setup(service => service.GetResolvedCurrentAsync(
+                fixture.Repository.Id,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(configuration);
+        SetupHave(fixture, 101);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.TriggerAsync(
+            fixture.Repository.Id,
+            fixture.Branch.Id,
+            "101"));
+
+        Assert.Contains("filespec", exception.Message, StringComparison.OrdinalIgnoreCase);
+        fixture.Perforce.Verify(client => client.GetChangelistsAsync(
+            It.IsAny<string>(),
+            It.IsAny<long>(),
+            It.IsAny<long>(),
+            It.IsAny<int>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Perforce.Verify(client => client.GetChangelistsAsync(
+            It.IsAny<string>(),
+            It.IsAny<long>(),
+            It.IsAny<long>(),
+            It.IsAny<int>(),
+            It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Incremental.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task TriggerAsync_UnmappedMovePartnerStillQueuesMappedSide()
+    {
+        await using var fixture = CreateFixture("100");
+        SetupHave(fixture, 101);
+        fixture.Perforce.Setup(client => client.GetChangelistsAsync(
+                fixture.Workspace, 100, 101, 501, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new PerforceChangelist(101, "alice", "cross-view move")]);
+        fixture.Perforce.Setup(client => client.GetFileChangesAsync(
+                fixture.Workspace, 101, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                new PerforceFileChange(
+                    101,
+                    "//depot/Game/Source/Old.cpp",
+                    "Source/Old.cpp",
+                    "move/delete",
+                    "text",
+                    "//depot/Game/Outside/New.cpp",
+                    null),
+                Change(101, "Source/Game/Edit.cpp", "edit", "text")
+            ]);
+        fixture.Incremental.Setup(service => service.TriggerExternalUpdateAsync(
+                fixture.Repository.Id,
+                fixture.Branch.Id,
+                "101",
+                It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Game/Edit.cpp" })),
+                It.Is<IReadOnlyList<string>>(files => files.SequenceEqual(new[] { "Source/Old.cpp" })),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync("partial-move-task");
+
+        var result = await fixture.Service.TriggerAsync(
+            fixture.Repository.Id,
+            fixture.Branch.Id,
+            "101");
+
+        Assert.Equal(2, result.IncludedFiles);
+        Assert.Contains(result.Changes!, change =>
+            change.Action == "move"
+            && change.OldWorkspaceRelativePath == "Source/Old.cpp"
+            && change.NewWorkspaceRelativePath is null);
+        fixture.Incremental.VerifyAll();
+    }
+
     private static void SetupHave(Fixture fixture, long haveCl)
     {
         fixture.Perforce.Setup(client => client.GetLatestChangelistAsync(

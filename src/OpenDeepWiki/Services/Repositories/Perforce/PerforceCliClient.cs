@@ -80,23 +80,38 @@ public sealed class PerforceCliClient(
             return [];
         }
 
-        var arguments = new List<string>
-        {
-            "changes", "-s", "submitted", "-L", "-m",
-            Math.Max(1, maxResults).ToString(CultureInfo.InvariantCulture)
-        };
+        // Query each filespec separately with its own -m budget, then merge.
+        // A single multi-filespec changes call can burn the -m quota on duplicate
+        // CLs that hit multiple roots, under-counting unique CLs and weakening the
+        // MaxChangelists full-generation safety valve.
+        var limit = Math.Max(1, maxResults);
         var range = $"@{checked(afterChangelist + 1).ToString(CultureInfo.InvariantCulture)},@{throughChangelist.ToString(CultureInfo.InvariantCulture)}";
-        arguments.AddRange(normalizedFilespecs.Select(filespec => filespec + range));
-        var result = await commandRunner.RunTaggedAsync(
-            workspaceRoot,
-            arguments,
-            cancellationToken);
+        var byNumber = new Dictionary<long, PerforceChangelist>();
 
-        EnsureSuccess(result, $"query changelist range ({afterChangelist}, {throughChangelist}]");
-        return ParseChangelists(result.StandardOutput)
-            .Where(change => change.Number > afterChangelist && change.Number <= throughChangelist)
-            .GroupBy(change => change.Number)
-            .Select(group => group.First())
+        foreach (var filespec in normalizedFilespecs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var arguments = new List<string>
+            {
+                "changes", "-s", "submitted", "-L", "-m",
+                limit.ToString(CultureInfo.InvariantCulture),
+                filespec + range
+            };
+            var result = await commandRunner.RunTaggedAsync(
+                workspaceRoot,
+                arguments,
+                cancellationToken);
+
+            EnsureSuccess(result, $"query changelist range ({afterChangelist}, {throughChangelist}] for {filespec}");
+            foreach (var change in ParseChangelists(result.StandardOutput)
+                         .Where(change => change.Number > afterChangelist && change.Number <= throughChangelist))
+            {
+                byNumber.TryAdd(change.Number, change);
+            }
+        }
+
+        return byNumber.Values
             .OrderBy(change => change.Number)
             .ToArray();
     }
@@ -154,8 +169,12 @@ public sealed class PerforceCliClient(
             {
                 if (!mappedPaths.TryGetValue(movedDepotPath, out movedRelativePath))
                 {
-                    throw new PerforceCommandException(
-                        $"Failed to map movedFile '{movedDepotPath}' for changelist {changelist}");
+                    // Partner may live outside the client view (cross-view move). Keep the
+                    // depot-level movedFile so collator can still emit a one-sided logical
+                    // move; do not fail the whole changelist and drop unrelated file edits.
+                    logger.LogWarning(
+                        "Moved partner path is outside or unmapped from workspace; keeping depot metadata only. Changelist: {Changelist}, DepotPath: {DepotPath}, MovedDepotPath: {MovedDepotPath}",
+                        changelist, file.DepotPath, movedDepotPath);
                 }
             }
 
@@ -429,7 +448,7 @@ public sealed class PerforceCliClient(
             "-T", "depotFile,movedFile"
         };
         arguments.AddRange(movedFiles.Select(path =>
-            $"{path}@{changelist.ToString(CultureInfo.InvariantCulture)}"));
+            $"{PerforceFilespecBuilder.EscapeLiteralPath(path)}@{changelist.ToString(CultureInfo.InvariantCulture)}"));
 
         var result = await commandRunner.RunTaggedAsync(workspaceRoot, arguments, cancellationToken);
         EnsureSuccess(result, $"query move metadata for changelist {changelist}");

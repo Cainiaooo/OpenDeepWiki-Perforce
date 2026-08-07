@@ -54,11 +54,17 @@ public static class PerforceFilespecBuilder
         return filespecs.Order(comparer).ToArray();
     }
 
-    private static string EscapeLiteralPath(string path)
+    /// <summary>
+    /// Escapes Perforce filespec metacharacters so a path is treated as a literal.
+    /// Safe for both workspace paths and depot paths before appending revision syntax.
+    /// </summary>
+    public static string EscapeLiteralPath(string path)
     {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+
         // P4 treats these characters as filespec syntax even when the process
         // API passes the argument without shell expansion. Encode the literal
-        // workspace path first, then append the intentional "..." wildcard.
+        // path first, then append intentional wildcards or revision selectors.
         return path
             .Replace("%", "%25", StringComparison.Ordinal)
             .Replace("@", "%40", StringComparison.Ordinal)
